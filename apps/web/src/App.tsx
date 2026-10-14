@@ -72,7 +72,7 @@ export function App() {
           const view = viewRef.current;
           if (!view) return { ok: false, error: 'Board not ready' };
           const result = await executeTool(board, view, name, args);
-          eventLine(`AI → board: ${name} ${JSON.stringify(args)} → ${JSON.stringify(result)}`);
+          eventLine(`AI → board: ${name} ${JSON.stringify(args)} → ${JSON.stringify(result, (k, v) => (k === "see" ? "[picture for the model]" : v))}`);
           return result;
         },
         onUsage: setUsage,
@@ -142,7 +142,7 @@ export function App() {
       if (step.say) upsert({ id: `demo-${i}`, role: 'assistant', text: step.say, final: true });
       const args = typeof step.args === 'function' ? step.args(results) : (step.args ?? {});
       const result = step.tool ? await executeTool(board, view, step.tool, args) : { ok: true as const };
-      if (step.tool) eventLine(`AI → board: ${step.tool} → ${JSON.stringify(result)}`);
+      if (step.tool) eventLine(`AI → board: ${step.tool} → ${JSON.stringify(result, (k, v) => (k === "see" ? "[picture for the model]" : v))}`);
       results.push(result);
       // Roughly the time it takes to say the line.
       await new Promise((r) => setTimeout(r, 600 + step.say.length * 35));

@@ -97,6 +97,26 @@ export type SketchElement = ElementBase<
     shownStrokes?: number;
   }
 >;
+/** A real picture (photo, painting, scan, diagram) from an openly licensed source, always credited. */
+export type ImageElement = ElementBase<
+  'image',
+  {
+    url: string;
+    /** Natural size, for the aspect ratio. */
+    width: number;
+    height: number;
+    title?: string;
+    caption?: string;
+    author: string;
+    license: string;
+    licenseUrl?: string;
+    /** Page the image comes from. */
+    source: string;
+    provider: string;
+    /** Other results for the same search, so the tutor can swap to a better one. */
+    alternatives?: unknown[];
+  }
+>;
 export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
 /** Clickable multiple-choice card. `selected` is set by the student. */
 export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;
@@ -119,6 +139,7 @@ export type BoardElement =
   | TableElement
   | StructureElement
   | SketchElement
+  | ImageElement
   | ChoiceElement
   | AnswerElement
   | AnnotationElement;

@@ -128,4 +128,5 @@ export const DEMO: DemoStep[] = [
   { say: 'And the history in order, to scale: the legend of a goat herder named Kaldi, around 850.', tool: 'draw_timeline', args: (r) => ({ events: coffeeEvents.slice(0, 1), start: '800', end: '1800', title: 'Coffee through history', placement: `right of ${idOf(r, 25)}` }) },
   { say: 'Six centuries later, Sufi monks in Yemen drank it to stay awake for night prayers. Then Istanbul opened coffeehouses.', tool: 'update_item', args: (r) => ({ id: idOf(r, 27), timeline: { events: coffeeEvents.slice(0, 3), start: '800', end: '1800' } }) },
   { say: 'Venice got its first coffee house in 1645, and in 1727 coffee was planted in Brazil, which is why Brazil leads that chart today.', tool: 'update_item', args: (r) => ({ id: idOf(r, 27), timeline: { events: coffeeEvents, start: '800', end: '1800' } }) },
+  { say: "And this is what coffee looks like on the plant: the beans are the seeds inside these red cherries.", tool: 'show_image', args: (r) => ({ query: 'Coffea arabica fruits', caption: 'Coffee cherries ripen from green to red; each holds two beans.', placement: `below ${idOf(r, 27)}` }) },
 ];

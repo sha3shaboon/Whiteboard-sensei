@@ -225,6 +225,23 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     type: 'function',
+    name: 'show_image',
+    description:
+      'Put a real picture on the board for things that cannot be drawn: a real place, animal, plant, artwork, historical photo or person, a rock or mineral, a cell under a microscope, a building, a machine. Images come from openly licensed sources (Wikimedia Commons, Openverse) and are credited automatically with author, license and source. ' +
+      'Search in English with specific, concrete terms ("Mount Fuji from Lake Kawaguchi", "plant cell micrograph", "Mona Lisa", "Saturn Cassini"). Add a short caption saying what to notice. You will SEE the picture after it is placed, so describe what is actually in it. If it is not right, update_item(id, pick: n) swaps to one of the listed alternatives. Do not use it for things the other tools draw better (maps, molecules, geometry, charts).',
+    parameters: obj(
+      {
+        query: { type: 'string' },
+        caption: { type: 'string', description: 'One line: what the student should notice' },
+        title: { type: 'string' },
+        width: { type: 'number', description: 'Display width (default 420)' },
+        placement,
+      },
+      ['query'],
+    ),
+  },
+  {
+    type: 'function',
     name: 'draw_structure',
     description:
       'Draw a data structure that you will then change step by step with structure_op, so the student SEES each operation happen (items slide in and out, pointers move). kinds: "queue" (front on the left, rear on the right), "stack" (bottom to top), "array" (with indexes), "linkedlist" (nodes with next arrows). Use it whenever you teach how a data structure or algorithm works, instead of writing its states as text.',
@@ -269,6 +286,8 @@ export const TOOLS: ToolDefinition[] = [
         geometry: { type: 'object', description: 'For draw_geometry figures: the full new figure spec (same fields as draw_geometry). New parts are drawn in.' },
         reveal: { type: 'number', description: 'For stroke-order drawings: total number of strokes to show' },
         map: { type: 'object', description: 'For maps: the full new map spec (same fields as show_map). New highlights/markers/routes draw in.' },
+        pick: { type: 'number', description: 'For pictures: show alternative n from the show_image result instead' },
+        caption: { type: 'string', description: 'For pictures: new caption' },
         chart: { type: 'object', description: 'For charts: the full new chart spec (same fields as draw_chart).' },
         timeline: { type: 'object', description: 'For timelines: the full new timeline spec (same fields as draw_timeline).' },
       },
@@ -605,6 +624,9 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
     case 'show_molecule':
       return showMolecule();
 
+    case 'show_image':
+      return showImage();
+
     case 'draw_chart':
     case 'draw_timeline': {
       const kind = name === 'draw_chart' ? 'chart' : 'timeline';
@@ -674,6 +696,16 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
         const height = Math.round((width * res.vh) / res.vw) + (el.content.title ? 26 : 0);
         board.update(el.id, { content: { ...el.content, svg: res.svg, vw: res.vw, vh: res.vh, parts: res.parts, source: spec }, bounds: { ...el.bounds, width, height } }, 'ai');
         return { ok: true, ...(built.warnings.length ? { warnings: built.warnings } : {}) };
+      }
+      if (el.type === 'image') {
+        const alts = (el.content.alternatives ?? []) as ImageHit[];
+        const pick = args.pick === undefined ? -1 : Math.round(num(args.pick, -1));
+        if (pick >= alts.length) return { ok: false, error: `There are ${alts.length} alternatives (0-${alts.length - 1})` };
+        const hit = pick >= 0 ? alts[pick]! : null;
+        const content = { ...el.content, ...(hit ? imageContent(hit) : {}), caption: args.caption !== undefined ? str(args.caption) || undefined : el.content.caption };
+        const height = imageHeight(el.bounds.width, content);
+        board.update(el.id, { content, bounds: { ...el.bounds, height } }, 'ai');
+        return hit ? seeImage(ref(el), hit, { ok: true, now_showing: describeHit(hit) }) : { ok: true };
       }
       if (el.type === 'sketch' && el.content.kind === 'molecule') return { ok: false, error: 'Molecules are fixed; use annotate to point at a part, or show_molecule for another one' };
       if (el.type === 'sketch' && el.content.kind === 'strokes') {
@@ -803,6 +835,25 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       { width, height: Math.round((width * clean.vh) / clean.vw) + 26 + 20 },
     );
     return { ok: true, id: ref(el), name: m.title, formula: m.formula, iupac: m.iupac, molar_mass: m.weight ? `${m.weight} g/mol` : undefined };
+  }
+
+  async function showImage(): Promise<ToolResult> {
+    const query = str(args.query).trim();
+    if (!query) return { ok: false, error: 'query is required' };
+    const res = await apiFetch(`/api/images?q=${encodeURIComponent(query)}`);
+    const body = (await res.json().catch(() => ({}))) as { results?: ImageHit[]; error?: string };
+    if (!res.ok || !body.results) return { ok: false, error: body.error ?? `Image search unavailable (${res.status})` };
+    if (!body.results.length) return { ok: false, error: `No openly licensed picture found for "${query}". Try simpler or different words.` };
+    const [hit, ...rest] = body.results.slice(0, 6) as [ImageHit, ...ImageHit[]];
+    const width = Math.min(640, Math.max(200, num(args.width, 420)));
+    const content = { ...imageContent(hit), title: str(args.title) || undefined, caption: str(args.caption) || undefined, alternatives: body.results.slice(0, 6) };
+    const el = place({ type: 'image', content }, { width, height: imageHeight(width, content) });
+    return seeImage(ref(el), hit, {
+      ok: true,
+      id: ref(el),
+      showing: describeHit(hit),
+      ...(rest.length ? { alternatives: body.results.slice(0, 6).map((r, i) => `${i}: ${r.title}`) } : {}),
+    });
   }
 
   async function showMap(): Promise<ToolResult> {
@@ -935,4 +986,62 @@ function timelineSpec(a: Record<string, unknown>): TimelineSpec {
     ...(a.start != null && a.start !== '' ? { start: date(a.start) } : {}),
     ...(a.end != null && a.end !== '' ? { end: date(a.end) } : {}),
   };
+}
+
+interface ImageHit {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  width: number;
+  height: number;
+  source: string;
+  author: string;
+  license: string;
+  licenseUrl?: string;
+  provider: string;
+}
+
+function imageContent(h: ImageHit) {
+  return { url: h.url, width: h.width || 4, height: h.height || 3, author: h.author, license: h.license, licenseUrl: h.licenseUrl, source: h.source, provider: h.provider };
+}
+
+/** Picture height plus room for the title, caption and credit lines. */
+function imageHeight(width: number, c: { width: number; height: number; title?: string; caption?: string }): number {
+  const ratio = c.width > 0 && c.height > 0 ? c.height / c.width : 0.75;
+  const captionLines = c.caption ? Math.ceil((c.caption.length * 7.4) / width) : 0;
+  return Math.round(width * Math.min(ratio, 1.6) + (c.title ? 26 : 0) + captionLines * 19 + (c.caption ? 6 : 0) + 22);
+}
+
+function describeHit(h: ImageHit): string {
+  return `${h.title}${h.description ? ` (${h.description.slice(0, 160)})` : ''}; ${h.author}, ${h.license}, ${h.provider}`;
+}
+
+/**
+ * Adds the picture itself (downscaled) to a tool result so the model can look at it; the realtime
+ * client sends it as an image message. Without it the tutor would describe a photo it hasn't seen.
+ */
+async function seeImage(id: string, hit: ImageHit, result: ToolResult & { ok: true }): Promise<ToolResult> {
+  try {
+    const res = await apiFetch(`/api/images/view?url=${encodeURIComponent(hit.url)}`);
+    if (!res.ok) return result;
+    const bitmap = await createImageBitmap(await res.blob());
+    const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return {
+      ...result,
+      see: {
+        image: canvas.toDataURL('image/jpeg', 0.8),
+        text: `[Picture] This is the picture now on the board as ${id} ("${hit.title}"), sent by the app (not the student) so you can see it. Describe only what is really in it; if it doesn't fit, swap it with update_item pick.`,
+      },
+    };
+  } catch {
+    return result;
+  }
 }

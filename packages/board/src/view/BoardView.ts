@@ -311,8 +311,9 @@ export class BoardView {
       // Text, math and tables are "written" left to right; interactive cards fade in.
       const interactive = node.dataset.interactive !== undefined;
       const selfAnimated = node.dataset.kind === 'sketch'; // draws its own strokes in
-      node.style.opacity = fade ? '0.25' : interactive ? String(p) : p <= 0 && !selfAnimated ? '0' : '1';
-      node.style.clipPath = !interactive && !selfAnimated && p < 1 ? `inset(-4px ${(1 - easeOut(p)) * 100}% -4px -4px)` : '';
+      const fadeIn = interactive || node.dataset.kind === 'image'; // pictures fade in rather than wipe
+      node.style.opacity = fade ? '0.25' : fadeIn ? String(p) : p <= 0 && !selfAnimated ? '0' : '1';
+      node.style.clipPath = !fadeIn && !selfAnimated && p < 1 ? `inset(-4px ${(1 - easeOut(p)) * 100}% -4px -4px)` : '';
       node.style.transform = g?.kind === 'move' && g.id === id ? `translate(${g.dx}px, ${g.dy}px)` : '';
     }
 

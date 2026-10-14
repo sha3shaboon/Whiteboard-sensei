@@ -337,7 +337,14 @@ export class RealtimeClient {
     } finally {
       this.toolsInFlight--;
     }
+    // A tool may hand back a picture for the model to look at (e.g. a photo it just put on the
+    // board); it goes in as an image message after the result, not inside the JSON.
+    const see = output && typeof output === 'object' ? (output as { see?: { image: string; text: string } }).see : undefined;
+    if (see) delete (output as { see?: unknown }).see;
     this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
+    if (see?.image) {
+      this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: see.text }, { type: 'input_image', image_url: see.image }] } });
+    }
     this.tryContinue();
   }
 

@@ -2,16 +2,17 @@
 // transformed container so it pans and zooms with the canvas.
 
 import katex from 'katex';
-import type { BoardElement, ChoiceElement, CodeElement, MathElement, SketchElement, TableElement, TextElement } from '../elements';
+import type { BoardElement, ChoiceElement, CodeElement, ImageElement, MathElement, SketchElement, TableElement, TextElement } from '../elements';
 
-export type DomElement = TextElement | MathElement | CodeElement | TableElement | ChoiceElement | SketchElement;
+export type DomElement = TextElement | MathElement | CodeElement | TableElement | ChoiceElement | SketchElement | ImageElement;
 export type DomContent =
   | { type: 'text'; content: TextElement['content'] }
   | { type: 'math'; content: MathElement['content'] }
   | { type: 'code'; content: CodeElement['content'] }
   | { type: 'table'; content: TableElement['content'] }
   | { type: 'choice'; content: ChoiceElement['content'] }
-  | { type: 'sketch'; content: SketchElement['content'] };
+  | { type: 'sketch'; content: SketchElement['content'] }
+  | { type: 'image'; content: ImageElement['content'] };
 
 /** Inline math inside table cells / choices: text between $...$ is rendered with KaTeX. */
 function richText(text: string): string {
@@ -35,7 +36,7 @@ const letter = (i: number) => String.fromCharCode(65 + i);
 export const MAX_BLOCK_WIDTH = 560;
 
 export function isDomElement(el: BoardElement): el is DomElement {
-  return el.type === 'text' || el.type === 'math' || el.type === 'code' || el.type === 'table' || el.type === 'choice' || el.type === 'sketch';
+  return el.type === 'text' || el.type === 'math' || el.type === 'code' || el.type === 'table' || el.type === 'choice' || el.type === 'sketch' || el.type === 'image';
 }
 
 /** Fills `node` with the rendered content; returns nothing, styles are inline so measuring works off-board. */
@@ -76,6 +77,33 @@ export function renderDomContent(node: HTMLElement, el: DomContent): void {
         (c.credit ? `<div style="font:11px system-ui,sans-serif;color:#9a9a94;margin-top:4px">${escapeHtml(c.credit)}</div>` : '');
       const svg = node.querySelector('svg');
       if (svg) Object.assign(svg.style, { display: 'block', width: '100%', height: 'auto', overflow: 'visible' });
+      Object.assign(node.style, { padding: '0' });
+      break;
+    }
+    case 'image': {
+      const c = el.content;
+      const link = (href: string | undefined, text: string) =>
+        href && /^https?:\/\//.test(href)
+          ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="color:inherit;pointer-events:auto">${escapeHtml(text)}</a>`
+          : escapeHtml(text);
+      node.innerHTML =
+        (c.title ? `<div style="font:600 15px system-ui,sans-serif;color:#2563eb;margin-bottom:4px">${escapeHtml(c.title)}</div>` : '') +
+        `<div style="aspect-ratio:${c.width || 4} / ${c.height || 3};background:#f1f1ee;border-radius:6px;overflow:hidden">` +
+        `<img src="${escapeHtml(c.url)}" alt="${escapeHtml(c.caption ?? c.title ?? '')}" referrerpolicy="no-referrer" draggable="false" style="display:block;width:100%;height:100%;object-fit:contain"></div>` +
+        (c.caption ? `<div style="font:14px/1.35 system-ui,sans-serif;color:#1c1c1a;margin-top:6px">${escapeHtml(c.caption)}</div>` : '') +
+        // Attribution as the licenses require: author, license (linked) and source (linked).
+        `<div data-credit style="font:11px/1.4 system-ui,sans-serif;color:#8a8a84;margin-top:4px">${escapeHtml(c.author)} · ${link(c.licenseUrl, c.license)} · ${link(c.source, c.provider)}</div>`;
+      const img = node.querySelector('img');
+      // One retry (a busy image host can refuse a request), then a placeholder; the credit stays.
+      let retried = false;
+      if (img) img.onerror = () => {
+        if (!retried) {
+          retried = true;
+          setTimeout(() => (img.src = `${c.url}${c.url.includes('?') ? '&' : '?'}retry=1`), 1500);
+          return;
+        }
+        img.replaceWith(Object.assign(document.createElement('div'), { textContent: 'Image unavailable', style: 'padding:24px;color:#9a9a94;font:13px system-ui;text-align:center' }));
+      };
       Object.assign(node.style, { padding: '0' });
       break;
     }

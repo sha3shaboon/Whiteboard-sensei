@@ -1,0 +1,148 @@
+{
+ "batchcomplete": true,
+ "query": {
+  "pages": [
+   {
+    "pageid": 3,
+    "ns": 6,
+    "title": "File:Volcano diagram.svg",
+    "index": 3,
+    "imageinfo": [
+     {
+      "size": 1,
+      "width": 600,
+      "height": 400,
+      "thumburl": "https://upload.wikimedia.org/thumb/Volcano diagram.svg/960px.jpg",
+      "thumbwidth": 600,
+      "thumbheight": 400,
+      "url": "https://upload.wikimedia.org/Volcano diagram.svg",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Volcano_diagram.svg",
+      "mime": "image/svg+xml",
+      "extmetadata": {
+       "Artist": {
+        "value": "USGS"
+       },
+       "LicenseShortName": {
+        "value": "Public domain"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "pageid": 1,
+    "ns": 6,
+    "title": "File:Stromboli Eruption.jpg",
+    "index": 1,
+    "imageinfo": [
+     {
+      "size": 1,
+      "width": 939,
+      "height": 1400,
+      "thumburl": "https://upload.wikimedia.org/thumb/Stromboli Eruption.jpg/960px.jpg",
+      "thumbwidth": 939,
+      "thumbheight": 1400,
+      "url": "https://upload.wikimedia.org/Stromboli Eruption.jpg",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Stromboli_Eruption.jpg",
+      "mime": "image/jpeg",
+      "extmetadata": {
+       "ObjectName": {
+        "value": "Stromboli Eruption"
+       },
+       "ImageDescription": {
+        "value": "Eruption of <a href=\"https://en.wikipedia.org/wiki/Stromboli\">Stromboli</a> (Isole Eolie/Italia), ca. 100m (300ft) vertically."
+       },
+       "Artist": {
+        "value": "<a href=\"https://de.wikipedia.org/wiki/Benutzer:Wolfgangbeyer\">Wolfgang Beyer</a>"
+       },
+       "LicenseShortName": {
+        "value": "CC BY-SA 3.0"
+       },
+       "LicenseUrl": {
+        "value": "http://creativecommons.org/licenses/by-sa/3.0/"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "pageid": 2,
+    "ns": 6,
+    "title": "File:Volcano report.pdf",
+    "index": 2,
+    "imageinfo": [
+     {
+      "size": 1,
+      "width": 1200,
+      "height": 1600,
+      "thumburl": "https://upload.wikimedia.org/thumb/Volcano report.pdf/960px.jpg",
+      "thumbwidth": 960,
+      "thumbheight": 1280,
+      "url": "https://upload.wikimedia.org/Volcano report.pdf",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Volcano_report.pdf",
+      "mime": "application/pdf",
+      "extmetadata": {
+       "Artist": {
+        "value": "USGS"
+       },
+       "LicenseShortName": {
+        "value": "Public domain"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "pageid": 4,
+    "ns": 6,
+    "title": "File:Tiny icon.png",
+    "index": 4,
+    "imageinfo": [
+     {
+      "size": 1,
+      "width": 64,
+      "height": 64,
+      "thumburl": "https://upload.wikimedia.org/thumb/Tiny icon.png/960px.jpg",
+      "thumbwidth": 64,
+      "thumbheight": 64,
+      "url": "https://upload.wikimedia.org/Tiny icon.png",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:Tiny_icon.png",
+      "mime": "image/png",
+      "extmetadata": {
+       "Artist": {
+        "value": "USGS"
+       },
+       "LicenseShortName": {
+        "value": "Public domain"
+       }
+      }
+     }
+    ]
+   },
+   {
+    "pageid": 5,
+    "ns": 6,
+    "title": "File:No license.jpg",
+    "index": 5,
+    "imageinfo": [
+     {
+      "size": 1,
+      "width": 800,
+      "height": 600,
+      "thumburl": "https://upload.wikimedia.org/thumb/No license.jpg/960px.jpg",
+      "thumbwidth": 800,
+      "thumbheight": 600,
+      "url": "https://upload.wikimedia.org/No license.jpg",
+      "descriptionurl": "https://commons.wikimedia.org/wiki/File:No_license.jpg",
+      "mime": "image/jpeg",
+      "extmetadata": {
+       "Artist": {
+        "value": "X"
+       }
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

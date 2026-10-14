@@ -74,6 +74,19 @@ pnpm --filter @ai-tutor/web e2e   # with pnpm dev running: full session against 
 
 Not yet: accounts, saved sessions/profiles (Stage 5), shape resizing, multi-select.
 
+## Data sources and licensing
+
+Precise visuals come from real data rather than the model drawing freehand. Every item shows its credit on the board.
+
+| Tool | Source | License / terms |
+| --- | --- | --- |
+| `show_stroke_order` | KanjiVG | CC BY-SA 3.0 |
+| `show_map` | Natural Earth (world-atlas, us-atlas) | Public domain |
+| `show_molecule` | PubChem | Public domain (NIH) |
+| `show_image` | Wikimedia Commons, then Openverse | Each image's own free license; author, license and source page are shown and linked |
+
+Images are never taken from general web search: most of those are copyrighted, and naming the source does not grant a license. Commons only hosts freely licensed files. Openverse results are limited to licenses that allow commercial use (CC0, PDM, CC BY, CC BY-SA, CC BY-ND), because the product is a paid subscription. Images are shown unmodified, with attribution.
+
 ## Stage 0 checklist
 
 - [ ] **Pen input**: `pnpm spike:pen`, open the printed network URL on an iPad (same Wi-Fi).

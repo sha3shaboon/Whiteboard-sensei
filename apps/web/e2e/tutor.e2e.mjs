@@ -59,6 +59,7 @@ await p.addInitScript(() => {
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call6', name: 'show_stroke_order', arguments: JSON.stringify({ text: '二', reveal: 1, placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call7', name: 'show_molecule', arguments: JSON.stringify({ name: 'water', placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call8', name: 'draw_chart', arguments: JSON.stringify({ type: 'bar', labels: ['A', 'B'], series: [{ values: [1, 2] }], placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call10', name: 'show_image', arguments: JSON.stringify({ query: 'volcano', caption: 'Lava fountains', placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call9', name: 'draw_timeline', arguments: JSON.stringify({ events: [{ date: '500 BC', label: 'start' }, { date: 'AD 100', label: 'end' }], placement: 'new section' }) });
         this.server({ type: 'response.done', response: { id: rid, output: [] } });
         return;
@@ -105,6 +106,13 @@ await p.addInitScript(() => {
 await p.route('**/api/realtime/session', (r) => r.fulfill({ json: { value: 'ek_test', expires_at: 0 } }));
 await p.route('https://api.openai.com/v1/realtime/calls', (r) => r.fulfill({ body: 'fake-answer', contentType: 'application/sdp' }));
 await p.route('**/api/recognize', (r) => r.fulfill({ json: { text: '3x = 12', ms: 300 } }));
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==', 'base64');
+await p.route('**/api/images?**', (r) => r.fulfill({ json: { results: [
+  { id: 'commons:File:Stromboli.jpg', title: 'Stromboli Eruption', description: 'Eruption of Stromboli', url: '/test-image.png', width: 640, height: 480, source: 'https://commons.wikimedia.org/wiki/File:Stromboli_Eruption.jpg', author: 'Wolfgang Beyer', license: 'CC BY-SA 3.0', licenseUrl: 'https://creativecommons.org/licenses/by-sa/3.0/', provider: 'Wikimedia Commons' },
+  { id: 'commons:File:Etna.jpg', title: 'Etna', description: '', url: '/test-image.png', width: 600, height: 400, source: 'https://commons.wikimedia.org/wiki/File:Etna.jpg', author: 'A', license: 'CC0', provider: 'Wikimedia Commons' },
+] } }));
+await p.route('**/api/images/view**', (r) => r.fulfill({ body: PNG, contentType: 'image/png' }));
+await p.route('**/test-image.png', (r) => r.fulfill({ body: PNG, contentType: 'image/png' }));
 await p.route('**/api/molecule**', (r) => r.fulfill({ json: { credit: 'Structure: PubChem', molecule: { cid: 962, title: 'Water', formula: 'H2O', iupac: 'oxidane', weight: '18.015', atoms: [{ el: 'O', x: 0, y: 0 }, { el: 'H', x: 1, y: 0 }, { el: 'H', x: -0.3, y: 0.9 }], bonds: [{ a: 0, b: 1, order: 1 }, { a: 0, b: 2, order: 1 }] } } }));
 await p.route('**/api/strokes/**', (r) => r.fulfill({ json: { credit: 'Stroke order data: KanjiVG (CC BY-SA 3.0)', chars: [{ char: '二', strokes: [{ d: 'M28 30c3 0 6 0 9 0', type: '㇐' }, { d: 'M14 79c4 1 8 1 12 0', type: '㇐' }], numbers: [{ x: 22, y: 30 }, { x: 8, y: 79 }] }] } }));
 
@@ -222,6 +230,13 @@ check('stroke order result lists stroke types for narration', texts.some((t) => 
 check('molecule drawn from PubChem data with credit', await p.evaluate(() => [...document.querySelectorAll('.board-sketch')].some((n) => n.textContent.includes('PubChem') && n.textContent.includes('H₂O') && !!n.querySelector('[data-k="atom-0"]'))));
 check('molecule result gives formula and molar mass', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('"formula":"H2O"') && t.includes('18.015 g/mol')));
 check('chart and timeline drawn', await p.evaluate(() => !!document.querySelector('.board-sketch [data-k="bar-0-1"]') && !!document.querySelector('.board-sketch [data-k="event-1"]') && document.body.innerHTML.includes('500 BC')));
+check('picture shown with caption, author, license and source links', await p.evaluate(() => {
+  const el = document.querySelector('.board-image');
+  const links = [...(el?.querySelectorAll('[data-credit] a') ?? [])].map((a) => a.getAttribute('href'));
+  return !!el?.querySelector('img') && el.textContent.includes('Lava fountains') && el.textContent.includes('Wolfgang Beyer') && links.includes('https://creativecommons.org/licenses/by-sa/3.0/') && links.includes('https://commons.wikimedia.org/wiki/File:Stromboli_Eruption.jpg');
+}));
+check('the tutor model gets to see the picture', sent.some((e) => e.type === 'conversation.item.create' && e.item.content?.some?.((c) => c.type === 'input_image' && c.image_url.startsWith('data:image/jpeg')) && e.item.content[0].text.startsWith('[Picture]')));
+check('picture data not inside the tool output', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('Stromboli Eruption') && !t.includes('data:image')));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

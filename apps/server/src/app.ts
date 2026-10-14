@@ -3,6 +3,7 @@ import { createClientSecret, type RealtimeConfig } from './realtime.js';
 import type { Recognizer } from './recognize.js';
 import type { StrokeLoader } from './strokes.js';
 import type { MoleculeLoader } from './molecule.js';
+import type { ImageSearch } from './images.js';
 
 export interface AppDeps {
   realtime: RealtimeConfig | null;
@@ -11,10 +12,11 @@ export interface AppDeps {
   accessCodes?: string[];
   strokes?: StrokeLoader;
   molecules?: MoleculeLoader;
+  images?: ImageSearch & { issued: Set<string> };
   fetchImpl?: typeof fetch;
 }
 
-export function createApp({ realtime, recognizer, accessCodes = [], strokes, molecules, fetchImpl = fetch }: AppDeps) {
+export function createApp({ realtime, recognizer, accessCodes = [], strokes, molecules, images, fetchImpl = fetch }: AppDeps) {
   const app = new Hono();
   const codes = new Set(accessCodes.map((c) => c.trim()).filter(Boolean));
 
@@ -78,6 +80,38 @@ export function createApp({ realtime, recognizer, accessCodes = [], strokes, mol
     } catch (err) {
       console.error(err);
       return c.json({ error: 'PubChem is unavailable right now' }, 502);
+    }
+  });
+
+  // Openly licensed pictures (Wikimedia Commons, then Openverse), each with author and license.
+  app.get('/api/images', async (c) => {
+    if (!images) return c.json({ error: 'Image search is not available' }, 503);
+    const q = c.req.query('q')?.trim();
+    if (!q) return c.json({ error: 'Give a search query' }, 400);
+    try {
+      return c.json({ results: await images(q) });
+    } catch (err) {
+      console.error(err);
+      return c.json({ error: 'Image search is unavailable right now' }, 502);
+    }
+  });
+
+  // The bytes of an image this server returned from a search, so the browser can show it to the
+  // tutor model (same origin, no CORS). Only URLs handed out by /api/images: not an open proxy.
+  app.get('/api/images/view', async (c) => {
+    const url = c.req.query('url') ?? '';
+    if (!images?.issued.has(url)) return c.json({ error: 'Unknown image' }, 404);
+    try {
+      const res = await fetchImpl(url, { headers: { 'user-agent': 'WhiteboardSensei/1.0 (AI tutoring whiteboard)' } });
+      const type = res.headers.get('content-type') ?? '';
+      const size = Number(res.headers.get('content-length') ?? 0);
+      if (!res.ok || !type.startsWith('image/') || size > 12_000_000) return c.json({ error: 'Image unavailable' }, 502);
+      const body = await res.arrayBuffer();
+      if (body.byteLength > 12_000_000) return c.json({ error: 'Image too large' }, 502);
+      return c.body(body, 200, { 'content-type': type, 'cache-control': 'private, max-age=3600' });
+    } catch (err) {
+      console.error(err);
+      return c.json({ error: 'Image unavailable' }, 502);
     }
   });
 
