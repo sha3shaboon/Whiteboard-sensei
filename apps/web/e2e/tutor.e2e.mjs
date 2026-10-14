@@ -57,6 +57,9 @@ await p.addInitScript(() => {
         this.nextShow = false;
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call5', name: 'draw_geometry', arguments: JSON.stringify({ points: [{ name: 'A', x: 0, y: 0 }, { name: 'B', x: 5, y: 0 }, { name: 'C', x: 1, y: 3 }], polygons: ['ABC'], angles: [{ at: 'B', from: 'A', to: 'C', label: 'θ' }], placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call6', name: 'show_stroke_order', arguments: JSON.stringify({ text: '二', reveal: 1, placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call7', name: 'show_molecule', arguments: JSON.stringify({ name: 'water', placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call8', name: 'draw_chart', arguments: JSON.stringify({ type: 'bar', labels: ['A', 'B'], series: [{ values: [1, 2] }], placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call9', name: 'draw_timeline', arguments: JSON.stringify({ events: [{ date: '500 BC', label: 'start' }, { date: 'AD 100', label: 'end' }], placement: 'new section' }) });
         this.server({ type: 'response.done', response: { id: rid, output: [] } });
         return;
       }
@@ -102,6 +105,7 @@ await p.addInitScript(() => {
 await p.route('**/api/realtime/session', (r) => r.fulfill({ json: { value: 'ek_test', expires_at: 0 } }));
 await p.route('https://api.openai.com/v1/realtime/calls', (r) => r.fulfill({ body: 'fake-answer', contentType: 'application/sdp' }));
 await p.route('**/api/recognize', (r) => r.fulfill({ json: { text: '3x = 12', ms: 300 } }));
+await p.route('**/api/molecule**', (r) => r.fulfill({ json: { credit: 'Structure: PubChem', molecule: { cid: 962, title: 'Water', formula: 'H2O', iupac: 'oxidane', weight: '18.015', atoms: [{ el: 'O', x: 0, y: 0 }, { el: 'H', x: 1, y: 0 }, { el: 'H', x: -0.3, y: 0.9 }], bonds: [{ a: 0, b: 1, order: 1 }, { a: 0, b: 2, order: 1 }] } } }));
 await p.route('**/api/strokes/**', (r) => r.fulfill({ json: { credit: 'Stroke order data: KanjiVG (CC BY-SA 3.0)', chars: [{ char: '二', strokes: [{ d: 'M28 30c3 0 6 0 9 0', type: '㇐' }, { d: 'M14 79c4 1 8 1 12 0', type: '㇐' }], numbers: [{ x: 22, y: 30 }, { x: 8, y: 79 }] }] } }));
 
 await p.goto(BASE + '/');
@@ -215,6 +219,9 @@ check('stroke order shows real strokes, revealed gradually, with credit', await 
   return !!el && !!el.querySelector('[data-k="c0s1"]') && !el.querySelector('[data-k="c0s2"]');
 }));
 check('stroke order result lists stroke types for narration', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('二 stroke 1: horizontal')));
+check('molecule drawn from PubChem data with credit', await p.evaluate(() => [...document.querySelectorAll('.board-sketch')].some((n) => n.textContent.includes('PubChem') && n.textContent.includes('H₂O') && !!n.querySelector('[data-k="atom-0"]'))));
+check('molecule result gives formula and molar mass', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('"formula":"H2O"') && t.includes('18.015 g/mol')));
+check('chart and timeline drawn', await p.evaluate(() => !!document.querySelector('.board-sketch [data-k="bar-0-1"]') && !!document.querySelector('.board-sketch [data-k="event-1"]') && document.body.innerHTML.includes('500 BC')));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

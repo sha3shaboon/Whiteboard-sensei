@@ -11,3 +11,7 @@ export * from './routing';
 export * from './structure';
 export * from './figure';
 export * from './strokes';
+export * from './map';
+export * from './molecule';
+export * from './chart';
+export * from './timeline';

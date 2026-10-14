@@ -43,6 +43,24 @@ const drag = `
   <text id="drag-label" x="110" y="86" text-anchor="middle" fill="#ea580c">drag</text>`;
 const sketch = (...layers: string[]) => `<svg viewBox="0 0 440 290">${layers.join('')}</svg>`;
 
+
+// Coffee map layers: each step resends the whole spec with one more thing; only that draws in.
+const coffeeBase = { focus: ['Ethiopia', 'Yemen', 'Italy'], title: 'Where coffee began' };
+const ethiopia = { name: 'Ethiopia', color: '#16a34a', label: 'Ethiopia' };
+const yemen = { name: 'Yemen', color: '#ea580c', label: 'Yemen' };
+const mocha = { label: 'Mocha', lat: 13.32, lon: 43.25 };
+const venice = { label: 'Venice', lat: 45.44, lon: 12.32 };
+const istanbul = { label: 'Istanbul', lat: 41.01, lon: 28.98 };
+const coffeeEvents = [
+  { date: 'c. 850', label: 'Legend of Kaldi, Ethiopia' },
+  { date: '1450', label: 'Sufis in Yemen brew it' },
+  { date: '1554', label: 'Istanbul coffeehouses' },
+  { date: '1645', label: 'First in Venice' },
+  { date: '1727', label: 'Planted in Brazil' },
+];
+const producers = { type: 'bar', y_label: 'Coffee grown', unit: 'million tonnes' };
+const growers = ['Brazil', 'Vietnam', 'Indonesia', 'Colombia', 'Ethiopia'];
+
 export const DEMO: DemoStep[] = [
   { say: "Let's label a triangle properly: three vertices, three angles, three sides.", tool: 'write_text', args: { text: 'Triangles', style: 'title', placement: 'new section' } },
   {
@@ -100,4 +118,14 @@ export const DEMO: DemoStep[] = [
       placement: `right of ${idOf(r, 15)}`,
     }),
   },
+  { say: "Last topic: coffee, which connects geography, chemistry and history.", tool: 'write_text', args: { text: 'Coffee: a map, a molecule, a timeline', style: 'title', placement: 'new section' } },
+  { say: 'Coffee plants grow wild in the highlands of Ethiopia, in East Africa. That is where the story starts.', tool: 'show_map', args: { ...coffeeBase, highlight: [ethiopia] } },
+  { say: 'Across the Red Sea, in Yemen, people first roasted and brewed the beans, and the port of Mocha shipped them out.', tool: 'update_item', args: (r) => ({ id: idOf(r, 21), map: { ...coffeeBase, highlight: [ethiopia, yemen], markers: [mocha] } }) },
+  { say: 'From Mocha it travelled north to Istanbul, and from there Venetian merchants brought it into Europe.', tool: 'update_item', args: (r) => ({ id: idOf(r, 21), map: { ...coffeeBase, highlight: [ethiopia, yemen], markers: [mocha, istanbul, venice], routes: [{ from: mocha, to: istanbul }, { from: istanbul, to: venice }] } }) },
+  { say: "Why do people love it? Caffeine. Here is its real structure: two fused rings containing four nitrogen atoms, with two C=O groups and three methyl groups.", tool: 'show_molecule', args: (r) => ({ name: 'caffeine', placement: `right of ${idOf(r, 21)}` }) },
+  { say: 'Today most coffee is grown far from where it began. These are rough recent yearly figures in million tonnes: Brazil alone grows about three.', tool: 'draw_chart', args: (r) => ({ ...producers, labels: growers.slice(0, 2), series: [{ values: [3.0, 1.8] }], title: 'Largest coffee growers (approx.)', placement: `below ${idOf(r, 21)}` }) },
+  { say: 'Then Indonesia, Colombia, and Ethiopia, the original home, now fifth.', tool: 'update_item', args: (r) => ({ id: idOf(r, 25), chart: { ...producers, labels: growers, series: [{ values: [3.0, 1.8, 0.8, 0.6, 0.5] }] } }) },
+  { say: 'And the history in order, to scale: the legend of a goat herder named Kaldi, around 850.', tool: 'draw_timeline', args: (r) => ({ events: coffeeEvents.slice(0, 1), start: '800', end: '1800', title: 'Coffee through history', placement: `right of ${idOf(r, 25)}` }) },
+  { say: 'Six centuries later, Sufi monks in Yemen drank it to stay awake for night prayers. Then Istanbul opened coffeehouses.', tool: 'update_item', args: (r) => ({ id: idOf(r, 27), timeline: { events: coffeeEvents.slice(0, 3), start: '800', end: '1800' } }) },
+  { say: 'Venice got its first coffee house in 1645, and in 1727 coffee was planted in Brazil, which is why Brazil leads that chart today.', tool: 'update_item', args: (r) => ({ id: idOf(r, 27), timeline: { events: coffeeEvents, start: '800', end: '1800' } }) },
 ];

@@ -88,7 +88,7 @@ export type SketchElement = ElementBase<
     parts: string[];
     title?: string;
     /** How it was made: free SVG, a computed geometry figure, or stroke-order data. */
-    kind?: 'svg' | 'geometry' | 'strokes';
+    kind?: 'svg' | 'geometry' | 'strokes' | 'map' | 'molecule' | 'chart' | 'timeline';
     /** Source data for regenerating (geometry spec / stroke data), kept so updates can rebuild it. */
     source?: unknown;
     /** Attribution shown under the drawing (e.g. stroke data license). */

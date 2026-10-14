@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { createClientSecret, type RealtimeConfig } from './realtime.js';
 import type { Recognizer } from './recognize.js';
 import type { StrokeLoader } from './strokes.js';
+import type { MoleculeLoader } from './molecule.js';
 
 export interface AppDeps {
   realtime: RealtimeConfig | null;
@@ -9,10 +10,11 @@ export interface AppDeps {
   /** Trial access codes. When non-empty, every /api call except health needs one in `x-access-code`. */
   accessCodes?: string[];
   strokes?: StrokeLoader;
+  molecules?: MoleculeLoader;
   fetchImpl?: typeof fetch;
 }
 
-export function createApp({ realtime, recognizer, accessCodes = [], strokes, fetchImpl = fetch }: AppDeps) {
+export function createApp({ realtime, recognizer, accessCodes = [], strokes, molecules, fetchImpl = fetch }: AppDeps) {
   const app = new Hono();
   const codes = new Set(accessCodes.map((c) => c.trim()).filter(Boolean));
 
@@ -61,6 +63,22 @@ export function createApp({ realtime, recognizer, accessCodes = [], strokes, fet
     const missing = chars.filter((_, i) => !data[i]);
     if (missing.length) return c.json({ error: `No stroke data for ${missing.join(', ')}` }, 404);
     return c.json({ chars: data, credit: 'Stroke order data: KanjiVG (CC BY-SA 3.0)' });
+  });
+
+  // Molecule structure by name (?name=caffeine) or SMILES (?smiles=CCO).
+  app.get('/api/molecule', async (c) => {
+    if (!molecules) return c.json({ error: 'Molecule data is not available' }, 503);
+    const name = c.req.query('name')?.slice(0, 200);
+    const smiles = c.req.query('smiles')?.slice(0, 500);
+    if (!name && !smiles) return c.json({ error: 'Give a name or a SMILES string' }, 400);
+    try {
+      const mol = await molecules({ name, smiles });
+      if (!mol) return c.json({ error: `PubChem has no drawable structure for "${name ?? smiles}"` }, 404);
+      return c.json({ molecule: mol, credit: 'Structure: PubChem' });
+    } catch (err) {
+      console.error(err);
+      return c.json({ error: 'PubChem is unavailable right now' }, 502);
+    }
   });
 
   return app;

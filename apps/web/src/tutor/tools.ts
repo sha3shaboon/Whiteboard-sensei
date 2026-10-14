@@ -5,10 +5,15 @@
 import {
   COLORS,
   applyStructureOp,
+  buildMap,
+  fetchTopology,
   buildStrokeSvg,
   strokeTypeName,
   totalStrokes,
   buildFigure,
+  buildMoleculeSvg,
+  buildChart,
+  buildTimeline,
   arrowBounds,
   createStructure,
   describeStructure,
@@ -25,6 +30,10 @@ import {
   type ArrowPath,
   type CharStrokes,
   type FigureSpec,
+  type MapSpec,
+  type ChartSpec,
+  type TimelineSpec,
+  type MoleculeData,
   type StructureOp,
   type BoardElement,
   type Bounds,
@@ -151,6 +160,71 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     type: 'function',
+    name: 'show_map',
+    description:
+      'Show a real map (Natural Earth borders): never draw maps yourself. Highlight countries (or US states with region "usa") in colors, add cities as markers (lat/lon), draw routes (curved great-circle arrows, e.g. trade routes, migrations, flights), and zoom to an area (focus on countries, or bounds in degrees). ' +
+      'Reveal gradually: show the base map first, then update_item(id, map: {...same fields plus the next highlight/marker/route}) step by step while you explain; only the new parts draw in. Unknown names are reported back.',
+    parameters: obj(
+      {
+        region: { type: 'string', enum: ['world', 'usa'] },
+        focus: { type: 'array', items: { type: 'string' }, description: 'Countries/states to zoom to' },
+        bounds: obj({ west: { type: 'number' }, south: { type: 'number' }, east: { type: 'number' }, north: { type: 'number' } }, ['west', 'south', 'east', 'north']),
+        highlight: { type: 'array', items: obj({ name: { type: 'string' }, color: { type: 'string', description: 'Hex color, optional' }, label: { type: 'string' } }, ['name']) },
+        markers: { type: 'array', items: obj({ label: { type: 'string' }, lat: { type: 'number' }, lon: { type: 'number' } }, ['label', 'lat', 'lon']) },
+        routes: { type: 'array', items: obj({ from: obj({ lat: { type: 'number' }, lon: { type: 'number' } }, ['lat', 'lon']), to: obj({ lat: { type: 'number' }, lon: { type: 'number' } }, ['lat', 'lon']), label: { type: 'string' } }, ['from', 'to']) },
+        labels: { type: 'boolean' },
+        title: { type: 'string' },
+        placement,
+      },
+      [],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'show_molecule',
+    description:
+      'Show the real structural formula of a molecule from PubChem (never draw molecules yourself): give a common or IUPAC name ("caffeine", "glucose", "benzene", "ethanoic acid") or a SMILES string. Drawn in skeletal style (carbons are corners, heteroatoms labeled with their hydrogens); bonds draw in from one end. The result has the formula, weight and IUPAC name to talk about.',
+    parameters: obj({ name: { type: 'string' }, smiles: { type: 'string' }, title: { type: 'string' }, placement }, []),
+  },
+  {
+    type: 'function',
+    name: 'draw_chart',
+    description:
+      'Draw a chart computed from data (to scale, round axis ticks, legend): "bar" (compare amounts), "line" (change over time), "pie" (parts of a whole, one series; percentages are computed). Use it for statistics, populations, climate, economics, experiment results. Only use data you are confident about, and say if values are approximate. ' +
+      'To build it up, draw the first values, then update_item(id, chart: {...all fields with more values or another series}); only the new bars/points draw in.',
+    parameters: obj(
+      {
+        type: { type: 'string', enum: ['bar', 'line', 'pie'] },
+        labels: { type: 'array', items: { type: 'string' }, description: 'Categories or x values, e.g. ["1950","1975","2000"]' },
+        series: { type: 'array', items: obj({ name: { type: 'string' }, values: { type: 'array', items: { type: 'number' } }, color: { type: 'string' } }, ['values']) },
+        x_label: { type: 'string' },
+        y_label: { type: 'string' },
+        unit: { type: 'string', description: 'e.g. "million", "°C", "%"' },
+        title: { type: 'string' },
+        placement,
+      },
+      ['type', 'labels', 'series'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'draw_timeline',
+    description:
+      'Draw a timeline to scale: events at their real dates, periods (with end) as bands. Dates like 1066, "500 BC", "AD 79", "1969-07-20", "3rd century BC", "65 mya". Use it for history, the history of science, geology, evolution, a person\'s life. ' +
+      'Go gradually: start with one or two events, then update_item(id, timeline: {events: [...all events so far plus the next]}) as you tell the story; only new events draw in. Keep earlier events in the same order.',
+    parameters: obj(
+      {
+        events: { type: 'array', items: obj({ date: { type: 'string' }, end: { type: 'string' }, label: { type: 'string', description: 'Short, a few words' } }, ['date', 'label']) },
+        start: { type: 'string', description: 'Optional axis start date (to leave room for later events)' },
+        end: { type: 'string', description: 'Optional axis end date' },
+        title: { type: 'string' },
+        placement,
+      },
+      ['events'],
+    ),
+  },
+  {
+    type: 'function',
     name: 'draw_structure',
     description:
       'Draw a data structure that you will then change step by step with structure_op, so the student SEES each operation happen (items slide in and out, pointers move). kinds: "queue" (front on the left, rear on the right), "stack" (bottom to top), "array" (with indexes), "linkedlist" (nodes with next arrows). Use it whenever you teach how a data structure or algorithm works, instead of writing its states as text.',
@@ -194,6 +268,9 @@ export const TOOLS: ToolDefinition[] = [
         svg: { type: 'string', description: 'For sketches: the full new SVG. Keep the ids of parts that stay; new parts are drawn in, missing ones disappear.' },
         geometry: { type: 'object', description: 'For draw_geometry figures: the full new figure spec (same fields as draw_geometry). New parts are drawn in.' },
         reveal: { type: 'number', description: 'For stroke-order drawings: total number of strokes to show' },
+        map: { type: 'object', description: 'For maps: the full new map spec (same fields as show_map). New highlights/markers/routes draw in.' },
+        chart: { type: 'object', description: 'For charts: the full new chart spec (same fields as draw_chart).' },
+        timeline: { type: 'object', description: 'For timelines: the full new timeline spec (same fields as draw_timeline).' },
       },
       ['id'],
     ),
@@ -522,6 +599,30 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
     case 'show_stroke_order':
       return showStrokeOrder();
 
+    case 'show_map':
+      return showMap();
+
+    case 'show_molecule':
+      return showMolecule();
+
+    case 'draw_chart':
+    case 'draw_timeline': {
+      const kind = name === 'draw_chart' ? 'chart' : 'timeline';
+      const spec = kind === 'chart' ? chartSpec(args) : timelineSpec(args);
+      const built = kind === 'chart' ? buildChart(spec as ChartSpec) : buildTimeline(spec as TimelineSpec);
+      if (!built.svg) return { ok: false, error: built.warnings.join('; ') };
+      const prefix = `${kind.slice(0, 2)}${Math.random().toString(36).slice(2, 8)}-`;
+      const res = sanitizeSvg(built.svg, prefix, { trusted: true });
+      if ('error' in res) return { ok: false, error: res.error };
+      const title = str(args.title) || undefined;
+      const width = Math.min(680, Math.max(320, res.vw));
+      const el = place(
+        { type: 'sketch', content: { svg: res.svg, vw: res.vw, vh: res.vh, prefix, parts: res.parts, title, kind, source: spec } },
+        { width, height: Math.round((width * res.vh) / res.vw) + (title ? 26 : 0) },
+      );
+      return { ok: true, id: ref(el), ...(built.warnings.length ? { warnings: built.warnings } : {}) };
+    }
+
     case 'draw_structure': {
       const kind = (['queue', 'stack', 'array', 'linkedlist'] as const).find((k) => k === args.kind) ?? 'array';
       const content = createStructure(kind, arr(args.items).map(str).slice(0, 16), COLORS.aiInk, str(args.title) || undefined);
@@ -549,6 +650,32 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       if (!el) return { ok: false, error: `Unknown item ${args.id}` };
       if (el.author !== 'ai') return { ok: false, error: "That's the student's work; annotate it instead of changing it" };
       const color = STATE_COLORS[str(args.state)];
+      if (el.type === 'sketch' && el.content.kind === 'map') {
+        if (!args.map || typeof args.map !== 'object') return Promise.resolve({ ok: false, error: 'Send the full new map spec as map: {...}' });
+        const spec = mapSpec(args.map as Args);
+        return buildMap(spec, fetchTopology).then((built): ToolResult => {
+          const res = sanitizeSvg(built.svg, el.content.prefix, { trusted: true });
+          if ('error' in res) return { ok: false, error: res.error };
+          board.update(el.id, { content: { ...el.content, svg: res.svg, vw: res.vw, vh: res.vh, parts: res.parts, source: spec } }, 'ai');
+          return { ok: true, ...(built.unmatched.length ? { not_found: built.unmatched } : {}) };
+        });
+      }
+      if (el.type === 'sketch' && (el.content.kind === 'chart' || el.content.kind === 'timeline')) {
+        const kind = el.content.kind;
+        const raw = args[kind];
+        if (!raw || typeof raw !== 'object') return { ok: false, error: `Send the full new ${kind} spec as ${kind}: {...}` };
+        const spec = kind === 'chart' ? chartSpec(raw as Args) : timelineSpec(raw as Args);
+        const built = kind === 'chart' ? buildChart(spec as ChartSpec) : buildTimeline(spec as TimelineSpec);
+        if (!built.svg) return { ok: false, error: built.warnings.join('; ') };
+        const res = sanitizeSvg(built.svg, el.content.prefix, { trusted: true });
+        if ('error' in res) return { ok: false, error: res.error };
+        // Grow with the data (more bars, a longer timeline) rather than shrinking the drawing.
+        const width = Math.max(el.bounds.width, Math.min(680, res.vw));
+        const height = Math.round((width * res.vh) / res.vw) + (el.content.title ? 26 : 0);
+        board.update(el.id, { content: { ...el.content, svg: res.svg, vw: res.vw, vh: res.vh, parts: res.parts, source: spec }, bounds: { ...el.bounds, width, height } }, 'ai');
+        return { ok: true, ...(built.warnings.length ? { warnings: built.warnings } : {}) };
+      }
+      if (el.type === 'sketch' && el.content.kind === 'molecule') return { ok: false, error: 'Molecules are fixed; use annotate to point at a part, or show_molecule for another one' };
       if (el.type === 'sketch' && el.content.kind === 'strokes') {
         const chars = el.content.source as CharStrokes[];
         const total = totalStrokes(chars);
@@ -658,6 +785,46 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
     return { ok: true, id: ref(el), shown, total, strokes: strokeList(chars) };
   }
 
+  async function showMolecule(): Promise<ToolResult> {
+    const q = str(args.smiles).trim() ? `smiles=${encodeURIComponent(str(args.smiles).trim())}` : `name=${encodeURIComponent(str(args.name).trim())}`;
+    if (!str(args.smiles).trim() && !str(args.name).trim()) return { ok: false, error: 'Give a name or smiles' };
+    const res = await apiFetch(`/api/molecule?${q}`);
+    const body = (await res.json().catch(() => ({}))) as { molecule?: MoleculeData & { iupac?: string; weight?: string }; credit?: string; error?: string };
+    if (!res.ok || !body.molecule) return { ok: false, error: body.error ?? `Structure unavailable (${res.status})` };
+    const m = body.molecule;
+    const built = buildMoleculeSvg(m);
+    const prefix = `mol${Math.random().toString(36).slice(2, 8)}-`;
+    const clean = sanitizeSvg(built.svg, prefix, { trusted: true });
+    if ('error' in clean) return { ok: false, error: clean.error };
+    const title = str(args.title) || built.title;
+    const width = Math.min(520, Math.max(200, clean.vw * 1.1));
+    const el = place(
+      { type: 'sketch', content: { svg: clean.svg, vw: clean.vw, vh: clean.vh, prefix, parts: clean.parts, title, kind: 'molecule', source: { cid: m.cid, title: m.title }, credit: body.credit } },
+      { width, height: Math.round((width * clean.vh) / clean.vw) + 26 + 20 },
+    );
+    return { ok: true, id: ref(el), name: m.title, formula: m.formula, iupac: m.iupac, molar_mass: m.weight ? `${m.weight} g/mol` : undefined };
+  }
+
+  async function showMap(): Promise<ToolResult> {
+    const spec = mapSpec(args);
+    let built;
+    try {
+      built = await buildMap(spec, fetchTopology);
+    } catch (err) {
+      return { ok: false, error: `Map data unavailable: ${(err as Error).message}` };
+    }
+    const prefix = `map${Math.random().toString(36).slice(2, 8)}-`;
+    const res = sanitizeSvg(built.svg, prefix, { trusted: true });
+    if ('error' in res) return { ok: false, error: res.error };
+    const title = str(args.title) || undefined;
+    const width = 560;
+    const el = place(
+      { type: 'sketch', content: { svg: res.svg, vw: res.vw, vh: res.vh, prefix, parts: res.parts, title, kind: 'map', source: spec, credit: built.credit } },
+      { width, height: Math.round((width * res.vh) / res.vw) + (title ? 26 : 0) + 20 },
+    );
+    return { ok: true, id: ref(el), shown: built.matched, ...(built.unmatched.length ? { not_found: built.unmatched } : {}) };
+  }
+
   function addArrow(path: ArrowPath, label?: string): BoardElement {
     return addAt({ type: 'arrow', content: { ...path, color: COLORS.aiInk, label } }, arrowBounds(path));
   }
@@ -717,4 +884,55 @@ function geometrySpec(a: Record<string, unknown>): FigureSpec {
 /** "新 stroke 1: dot" etc., numbered across characters, for the tutor's narration. */
 function strokeList(chars: CharStrokes[]): string[] {
   return chars.flatMap((c) => c.strokes.map((s, i) => `${c.char} stroke ${i + 1}: ${strokeTypeName(s.type)}`));
+}
+
+/** The map fields of a show_map call, loosely validated. */
+function mapSpec(a: Record<string, unknown>): MapSpec {
+  const list = <T,>(v: unknown) => (Array.isArray(v) ? (v as T[]) : undefined);
+  const n = (v: unknown) => Number(v);
+  const b = a.bounds as Record<string, unknown> | undefined;
+  return {
+    region: a.region === 'usa' ? 'usa' : 'world',
+    focus: list<unknown>(a.focus)?.map(String),
+    bounds: b && [b.west, b.south, b.east, b.north].every((v) => Number.isFinite(Number(v))) ? { west: n(b.west), south: n(b.south), east: n(b.east), north: n(b.north) } : undefined,
+    highlight: list<Record<string, unknown>>(a.highlight)?.map((h) => ({ name: String(h.name), color: h.color ? String(h.color) : undefined, label: h.label ? String(h.label) : undefined })),
+    markers: list<Record<string, unknown>>(a.markers)
+      ?.map((m) => ({ label: String(m.label), lat: n(m.lat), lon: n(m.lon) }))
+      .filter((m) => Number.isFinite(m.lat) && Number.isFinite(m.lon)),
+    routes: list<Record<string, Record<string, unknown>>>(a.routes)
+      ?.map((r) => ({ from: { lat: n(r.from?.lat), lon: n(r.from?.lon) }, to: { lat: n(r.to?.lat), lon: n(r.to?.lon) }, label: r.label ? String(r.label) : undefined }))
+      .filter((r) => [r.from.lat, r.from.lon, r.to.lat, r.to.lon].every(Number.isFinite)),
+    labels: a.labels === false ? false : undefined,
+  };
+}
+
+/** The fields of a draw_chart call, loosely validated. */
+function chartSpec(a: Record<string, unknown>): ChartSpec {
+  const opt = (v: unknown) => (v == null || v === '' ? undefined : String(v));
+  return {
+    type: a.type === 'line' || a.type === 'pie' ? a.type : 'bar',
+    labels: (Array.isArray(a.labels) ? a.labels : []).map(String),
+    series: (Array.isArray(a.series) ? a.series : []).map((s: Record<string, unknown>) => ({
+      name: opt(s?.name),
+      color: opt(s?.color),
+      values: (Array.isArray(s?.values) ? s.values : []).map((v) => (typeof v === 'number' ? v : Number.parseFloat(String(v).replace(/,/g, '')))),
+    })),
+    x_label: opt(a.x_label),
+    y_label: opt(a.y_label),
+    unit: opt(a.unit),
+  };
+}
+
+/** The fields of a draw_timeline call, loosely validated. */
+function timelineSpec(a: Record<string, unknown>): TimelineSpec {
+  const date = (v: unknown) => (typeof v === 'number' ? v : String(v ?? ''));
+  return {
+    events: (Array.isArray(a.events) ? a.events : []).map((e: Record<string, unknown>) => ({
+      date: date(e?.date),
+      label: String(e?.label ?? ''),
+      ...(e?.end != null && e.end !== '' ? { end: date(e.end) } : {}),
+    })),
+    ...(a.start != null && a.start !== '' ? { start: date(a.start) } : {}),
+    ...(a.end != null && a.end !== '' ? { end: date(a.end) } : {}),
+  };
 }

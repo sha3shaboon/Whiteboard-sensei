@@ -6,7 +6,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const TAGS = new Set([
   'svg', 'g', 'path', 'line', 'polyline', 'polygon', 'circle', 'ellipse', 'rect', 'text', 'tspan',
-  'defs', 'marker', 'lineargradient', 'radialgradient', 'stop', 'title', 'desc',
+  'defs', 'marker', 'lineargradient', 'radialgradient', 'stop', 'title', 'desc', 'clippath',
 ]);
 
 const ATTRS = new Set([
@@ -14,7 +14,7 @@ const ATTRS = new Set([
   'fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'stroke-opacity',
   'opacity', 'transform', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'dominant-baseline', 'letter-spacing',
   'marker-end', 'marker-start', 'marker-mid', 'viewbox', 'refx', 'refy', 'markerwidth', 'markerheight', 'orient', 'markerunits',
-  'offset', 'stop-color', 'stop-opacity', 'gradientunits', 'gradienttransform',
+  'offset', 'stop-color', 'stop-opacity', 'gradientunits', 'gradienttransform', 'clip-path', 'paint-order',
   // internal: parts shown instantly rather than drawn in (grids, guides)
   'data-static',
 ]);
@@ -36,8 +36,11 @@ export interface SanitizedSketch {
   parts: string[];
 }
 
-export function sanitizeSvg(markup: string, prefix: string): SanitizedSketch | { error: string } {
-  if (markup.length > MAX_MARKUP) return { error: `SVG too large (max ${MAX_MARKUP} characters)` };
+export function sanitizeSvg(markup: string, prefix: string, opts: { trusted?: boolean } = {}): SanitizedSketch | { error: string } {
+  // App-generated drawings (maps, molecules) can be larger than what the AI may send.
+  const maxMarkup = opts.trusted ? 2_000_000 : MAX_MARKUP;
+  const maxNodes = opts.trusted ? 20_000 : MAX_NODES;
+  if (markup.length > maxMarkup) return { error: `SVG too large (max ${maxMarkup} characters)` };
   const doc = new DOMParser().parseFromString(markup.trim(), 'image/svg+xml');
   const root = doc.documentElement;
   if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.getElementsByTagName('parsererror').length) {
@@ -56,7 +59,7 @@ export function sanitizeSvg(markup: string, prefix: string): SanitizedSketch | {
   const ids = new Set<string>(Object.keys(MARKERS));
   const walk = (el: Element) => {
     for (const child of [...el.children]) {
-      if (!TAGS.has(child.nodeName.toLowerCase()) || ++count > MAX_NODES) {
+      if (!TAGS.has(child.nodeName.toLowerCase()) || ++count > maxNodes) {
         child.remove();
         continue;
       }
@@ -153,7 +156,7 @@ export function animateSketch(node: HTMLElement, existing: Set<string> = new Set
     },
   );
   // Stroke-order drawings go one stroke at a time, slowly enough to follow.
-  const strokeOrder = !!svg.querySelector('[data-static]');
+  const strokeOrder = !!svg.querySelector('[data-k^="guide-"]');
   const stagger = strokeOrder ? 650 : Math.min(180, 3000 / Math.max(parts.length, 1));
   parts.forEach((el, i) => {
     const delay = i * stagger;
