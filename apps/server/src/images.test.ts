@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from './app.js';
-import { createImageSearch, licenseName, parseCommons, parseOpenverse, stripHtml } from './images.js';
+import { createImageSearch, licenseName, parseCommons, parseOpenverse, rerank, stripHtml, type ImageResult } from './images.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (f: string) => JSON.parse(readFileSync(path.join(here, '../test-fixtures', f), 'utf8'));
@@ -40,12 +40,35 @@ describe('image search', () => {
     const app = createApp({ realtime: null, recognizer: null, images, fetchImpl: fetchMock as unknown as typeof fetch });
     const body = (await (await app.request('/api/images?q=volcano')).json()) as { results: { url: string; provider: string }[] };
     expect(body.results[0]!.provider).toContain('Openverse');
+    const calls = fetchMock.mock.calls.length;
     await app.request('/api/images?q=Volcano');
-    expect(fetchMock).toHaveBeenCalledTimes(2); // second query served from cache
+    expect(fetchMock.mock.calls.length).toBe(calls); // second query served from cache
     const ok = await app.request(`/api/images/view?url=${encodeURIComponent(body.results[0]!.url)}`);
     expect(ok.status).toBe(200);
     expect(ok.headers.get('content-type')).toBe('image/jpeg');
     expect((await app.request('/api/images/view?url=http://169.254.169.254/latest')).status).toBe(404);
     expect((await app.request('/api/images')).status).toBe(400);
+  });
+
+  it('ranks files whose titles match the query first', () => {
+    const r = (title: string, description = '') => ({ id: title, title, description }) as ImageResult;
+    const ranked = rerank([r('Grumman E-2C Hawkeyes of VAW-115 fly past Mount Fuji on 15 February 2007'), r('Japanese temple', 'Mount Fuji in the distance'), r('Mount Fuji from Lake Kawaguchi')], 'Mount Fuji');
+    expect(ranked.map((x) => x.title)).toEqual(['Mount Fuji from Lake Kawaguchi', 'Grumman E-2C Hawkeyes of VAW-115 fly past Mount Fuji on 15 February 2007', 'Japanese temple']);
+  });
+
+  it("puts the Wikipedia article's lead picture first, only if it is a free file on Commons", async () => {
+    const stromboli = commons.query.pages.find((p: { title: string }) => p.title === 'File:Stromboli Eruption.jpg');
+    const run = async (onCommons: boolean) => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url.startsWith('https://en.wikipedia.org')) return Response.json({ query: { pages: [{ title: 'Stromboli', pageimage: 'Stromboli_Eruption.jpg' }] } });
+        if (url.includes('titles=File')) return Response.json({ query: { pages: onCommons ? [stromboli] : [{ title: 'File:Stromboli Eruption.jpg', missing: true }] } });
+        if (url.startsWith('https://commons.wikimedia.org')) return Response.json({ query: { pages: commons.query.pages.filter((p: { title: string }) => p.title !== 'File:Stromboli Eruption.jpg') } });
+        return new Response('no', { status: 500 });
+      });
+      return createImageSearch(fetchMock as unknown as typeof fetch)('Stromboli');
+    };
+    expect((await run(true)).map((r) => r.title)).toEqual(['Stromboli Eruption', 'Volcano diagram']);
+    // A non-free file hosted only on Wikipedia (fair use) is not on Commons, so it's skipped.
+    expect((await run(false)).map((r) => r.title)).toEqual(['Volcano diagram']);
   });
 });

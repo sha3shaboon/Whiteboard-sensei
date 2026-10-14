@@ -23,6 +23,7 @@ export type ImageSearch = (query: string) => Promise<ImageResult[]>;
 
 const UA = 'WhiteboardSensei/1.0 (AI tutoring whiteboard; educational image lookup)';
 const COMMONS = 'https://commons.wikimedia.org/w/api.php';
+const WIKIPEDIA = 'https://en.wikipedia.org/w/api.php';
 const OPENVERSE = 'https://api.openverse.org/v1/images/';
 const MIMES = new Set(['image/jpeg', 'image/png', 'image/svg+xml', 'image/gif', 'image/webp']);
 
@@ -131,28 +132,65 @@ export function parseOpenverse(body: { results?: OpenverseItem[] }): ImageResult
   });
 }
 
+const words = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+
+/**
+ * Commons' own ranking often puts a loosely related file first ("Mount Fuji" -> planes flying
+ * past it). Prefer titles that contain the query words, then descriptions, then shorter titles.
+ */
+export function rerank(results: ImageResult[], query: string): ImageResult[] {
+  const q = [...new Set(words(query))];
+  if (!q.length) return results;
+  const score = (r: ImageResult) => {
+    const t = new Set(words(r.title)), d = new Set(words(r.description));
+    const inTitle = q.filter((w) => t.has(w)).length / q.length;
+    const inDesc = q.filter((w) => d.has(w)).length / q.length;
+    return inTitle * 2 + inDesc * 0.5 - Math.min(r.title.length, 150) / 150;
+  };
+  return results.map((r, i) => ({ r, i, s: score(r) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.r);
+}
+
 export function createImageSearch(fetchImpl: typeof fetch = fetch): ImageSearch & { issued: Set<string> } {
   const cache = new Map<string, { at: number; results: ImageResult[] }>();
   // URLs this server has handed out; the image proxy only fetches these (no open proxy).
   const issued = new Set<string>();
 
-  const commons = async (q: string) => {
+  const commonsInfo = async (extra: Record<string, string>) => {
     const params = new URLSearchParams({
       action: 'query',
       format: 'json',
       formatversion: '2',
-      generator: 'search',
-      gsrsearch: `${q} filetype:bitmap|drawing`,
-      gsrnamespace: '6',
-      gsrlimit: '8',
       prop: 'imageinfo',
       iiprop: 'url|extmetadata|size|mime',
       iiurlwidth: '960',
       iiextmetadatafilter: 'Artist|LicenseShortName|LicenseUrl|ImageDescription|ObjectName',
+      ...extra,
     });
     const res = await fetchImpl(`${COMMONS}?${params}`, { headers: { 'user-agent': UA, 'api-user-agent': UA } });
     if (!res.ok) throw new Error(`Commons ${res.status}`);
     return parseCommons((await res.json()) as never);
+  };
+
+  // The lead picture of the best-matching Wikipedia article: usually the canonical photo of a
+  // named thing. Looked up on Commons, so non-free files Wikipedia hosts locally are never used.
+  const wikipediaLead = async (q: string): Promise<ImageResult[]> => {
+    const params = new URLSearchParams({ action: 'query', format: 'json', formatversion: '2', generator: 'search', gsrsearch: q, gsrlimit: '1', prop: 'pageimages', piprop: 'name' });
+    const res = await fetchImpl(`${WIKIPEDIA}?${params}`, { headers: { 'user-agent': UA, 'api-user-agent': UA } });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { query?: { pages?: { title: string; pageimage?: string }[] } };
+    const page = body.query?.pages?.[0];
+    if (!page?.pageimage) return [];
+    const found = await commonsInfo({ titles: `File:${page.pageimage}` });
+    return found.map((r) => ({ ...r, description: r.description || page.title }));
+  };
+
+  const commons = async (q: string) => {
+    const [lead, searched] = await Promise.all([
+      wikipediaLead(q).catch(() => [] as ImageResult[]),
+      commonsInfo({ generator: 'search', gsrsearch: `${q} filetype:bitmap|drawing`, gsrnamespace: '6', gsrlimit: '10' }),
+    ]);
+    const seen = new Set(lead.map((r) => r.id));
+    return [...lead, ...rerank(searched.filter((r) => !seen.has(r.id)), q)];
   };
 
   const openverse = async (q: string) => {
