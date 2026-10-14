@@ -7,6 +7,8 @@ import { boundsOfPoints, elementAt, hitTest, union } from '../geometry';
 import { translated } from '../transform';
 import { DOM_TYPES, drawArrowLine, drawElement, drawStrokePoints } from './draw';
 import { isDomElement, Measurer, renderDomContent, type DomContent } from './overlay';
+import { drawStructure } from './structure';
+import type { StructureContent } from '../structure';
 
 export type Tool = 'pen' | 'highlighter' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'select' | 'pan';
 
@@ -54,6 +56,8 @@ export class BoardView {
   private reveals = new Map<ElementId, { start: number; dur: number }>();
   /** Items added in a burst are revealed one after another, starting from here. */
   private revealCursor = 0;
+  /** Structure changes animating from their previous state. */
+  private transitions = new Map<ElementId, { from: StructureContent; fromBounds: Bounds; start: number; dur: number }>();
   private raf = 0;
   private cleanup: (() => void)[] = [];
 
@@ -169,6 +173,7 @@ export class BoardView {
       if (this.selected === c.element.id) this.selected = null;
     } else {
       if (c.kind === 'added' && c.origin === 'ai') this.scheduleReveal(c.element);
+      if (c.kind === 'updated' && c.origin === 'ai') this.animateUpdate(c.before, c.after);
       this.syncDom(c.kind === 'added' ? c.element : c.after);
     }
     this.invalidate();
@@ -180,6 +185,16 @@ export class BoardView {
     this.reveals.set(el.id, { start, dur });
     // The next item in the same burst starts when this one is mostly drawn.
     this.revealCursor = start + Math.min(dur * 0.8, 420);
+  }
+
+  /** AI changes to existing items are shown as change, not as a jump. */
+  private animateUpdate(before: BoardElement, after: BoardElement): void {
+    if (before.type === 'structure' && after.type === 'structure') {
+      this.transitions.set(after.id, { from: before.content, fromBounds: before.bounds, start: performance.now(), dur: 900 });
+    } else if (isDomElement(after)) {
+      this.reveals.delete(after.id);
+      this.scheduleReveal(after); // re-written in place
+    }
   }
 
   /** 0..1 draw-in progress of an element (1 when not animating). */
@@ -266,7 +281,19 @@ export class BoardView {
       ctx.save();
       if (g?.kind === 'erase' && g.ids.has(el.id)) ctx.globalAlpha = 0.25;
       if (g?.kind === 'move' && g.id === el.id) ctx.translate(g.dx, g.dy);
-      drawElement(ctx, el, lookup, this.progress(el.id, now));
+      if (el.type === 'structure') {
+        const tr = this.transitions.get(el.id);
+        let transition: { from: StructureContent; fromBounds: Bounds; progress: number } | undefined;
+        if (tr) {
+          const p = (now - tr.start) / tr.dur;
+          if (p >= 1) this.transitions.delete(el.id);
+          else {
+            transition = { from: tr.from, fromBounds: tr.fromBounds, progress: p };
+            this.dirty = true;
+          }
+        }
+        drawStructure(ctx, el, transition, this.progress(el.id, now));
+      } else drawElement(ctx, el, lookup, this.progress(el.id, now));
       ctx.restore();
     }
     for (const [id, node] of this.domNodes) {
@@ -615,6 +642,7 @@ const REVEAL_MS: Partial<Record<BoardElement['type'], number>> = {
   shape: 320,
   arrow: 450,
   graph: 1500,
+  structure: 500,
   annotation: 550,
 };
 

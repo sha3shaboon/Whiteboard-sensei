@@ -32,6 +32,7 @@ await p.addInitScript(() => {
         return;
       }
       if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'LONG') this.nextLong = true;
+      if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'WAIT') this.nextWait = true;
       if (ev.type !== 'response.create') return;
       const n = ++responses;
       const rid = 'resp' + n, item = 'item' + n;
@@ -42,6 +43,14 @@ await p.addInitScript(() => {
         this.server({ type: 'response.created', response: { id: 'long' } });
         this.server({ type: 'output_audio_buffer.started' });
         this.server({ type: 'response.output_audio_transcript.delta', item_id: 'long', delta: 'This is a long explanation…' });
+        return;
+      }
+      if (this.nextWait) {
+        // The tutor finishes and hands the turn to the student.
+        this.nextWait = false;
+        this.server({ type: 'response.output_audio_transcript.done', item_id: item, transcript: 'That is how it works.' });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'wait' + n, name: 'wait_for_student', arguments: '{}' });
+        this.server({ type: 'response.done', response: { id: rid, output: [] } });
         return;
       }
       if (n === 1) {
@@ -120,6 +129,13 @@ const pausedLabel = await p.locator('.chat-status').textContent();
 await p.getByRole('button', { name: 'Continue' }).click();
 await p.waitForTimeout(300);
 
+// wait_for_student: no automatic follow-up afterwards.
+const beforeWait = await p.evaluate(() => window.__sent.length);
+await p.getByPlaceholder('Type a message…').fill('WAIT');
+await p.keyboard.press('Enter');
+await p.waitForTimeout(1500);
+const afterWait = await p.evaluate((n) => window.__sent.slice(n).map((e) => e.type), beforeWait);
+
 await p.getByPlaceholder('Type a message…').fill('Is that right?');
 await p.keyboard.press('Enter');
 await p.waitForTimeout(300);
@@ -153,6 +169,14 @@ check('typing during a reply cancels it first', (() => {
 })());
 check('pause stops the reply and shows Paused', pausedLabel?.includes('Paused'));
 check('continue asks the tutor to go on', texts.some((t) => t.startsWith('[Student] Please continue')));
+check('a talking-only step still continues once, then lets the student in', (() => {
+  // resp1 (tools) -> auto resp2 ("Reply 2", talk only) -> auto resp3 -> stop before any student action
+  const firstStudent = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text?.startsWith('[Board] Student'));
+  const autos = sent.slice(0, firstStudent === -1 ? undefined : firstStudent).filter((e) => e.type === 'response.create').length;
+  return autos === 3; // greeting + 2 automatic continues
+})());
+check('wait_for_student stops the flow', afterWait.filter((t) => t === 'response.create').length === 1);
+check('session.update includes structure tools', ['draw_structure', 'structure_op', 'update_item', 'wait_for_student'].every((n) => sent[0].session.tools.some((t) => t.name === n)));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

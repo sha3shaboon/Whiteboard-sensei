@@ -14,55 +14,40 @@ export interface DemoStep {
 }
 
 const at = (results: Results, i: number) => results[i] as R;
+const queue = (r: Results) => at(r, 1).id as string;
+const stack = (r: Results) => at(r, 8).id as string;
+const node = (r: Results, key: string) => (at(r, 11).nodes as R)[key] as string;
 
 export const DEMO: DemoStep[] = [
-  { say: "Let's solve a linear equation, one step at a time.", tool: 'write_text', args: { text: 'Linear equations', style: 'title', placement: 'new section' } },
-  { say: 'Here is our equation: two x plus four equals ten.', tool: 'write_steps', args: { steps: [{ latex: '2x + 4 = 10', note: 'the equation' }] } },
-  { say: 'First, I subtract four from both sides, so the plus four disappears.', tool: 'write_steps', args: { steps: [{ latex: '2x = 6', note: 'subtract 4 from both sides' }] } },
-  { say: 'Then I divide both sides by two.', tool: 'write_steps', args: { steps: [{ latex: 'x = 3', note: 'divide both sides by 2' }] } },
-  { say: 'And x is on its own: x equals three.', tool: 'annotate', args: (r) => ({ target_id: (at(r, 3).steps as string[])[0], mode: 'circle', note: 'x is isolated' }) },
+  { say: 'A queue works like a line at a shop: people join at the back and leave from the front.', tool: 'write_text', args: { text: 'Queues: first in, first out', style: 'title', placement: 'new section' } },
+  { say: "Here's a queue holding one item, A. Since it's the only item, it's both the front and the rear.", tool: 'draw_structure', args: { kind: 'queue', items: ['A'], title: 'queue' } },
+  { say: 'When we enqueue B, it always joins at the rear, behind A. Notice that the rear pointer moves to B, while the front stays on A.', tool: 'structure_op', args: (r) => ({ id: queue(r), op: 'enqueue', value: 'B' }) },
+  { say: 'Enqueue C, and again it lines up behind the last item. Nothing already in the queue moves.', tool: 'structure_op', args: (r) => ({ id: queue(r), op: 'enqueue', value: 'C' }) },
+  { say: 'Dequeue is the opposite end: we always remove from the front. A was first in, so A is first out, and B becomes the new front.', tool: 'structure_op', args: (r) => ({ id: queue(r), op: 'dequeue' }) },
+  { say: 'Dequeue again, and B leaves. Now C is alone, so it is both front and rear.', tool: 'structure_op', args: (r) => ({ id: queue(r), op: 'dequeue' }) },
+  { say: 'That front-and-rear rule is what makes a queue fair: whoever waited longest is served next.', tool: 'annotate', args: (r) => ({ target_id: queue(r), mode: 'highlight', region: { x0: 0, x1: 0.3, y0: 0.4, y1: 1 } }) },
+  { say: 'Compare that with a stack, where everything happens at one end, the top.', tool: 'write_text', args: { text: 'Stacks: last in, first out', style: 'title', placement: 'new section' } },
+  { say: 'A stack of plates: we can only add or take from the top.', tool: 'draw_structure', args: { kind: 'stack', items: ['1', '2'], title: 'stack' } },
+  { say: 'Pushing 3 puts it on top of 2, and the top pointer moves up with it.', tool: 'structure_op', args: (r) => ({ id: stack(r), op: 'push', value: '3' }) },
+  { say: 'Pop takes from the top again, so the 3 we just added is the first to leave.', tool: 'structure_op', args: (r) => ({ id: stack(r), op: 'pop' }) },
   {
-    say: "On a graph, that's where the line y equals two x plus four reaches ten.",
-    tool: 'plot',
-    args: (r) => ({ functions: ['2x + 4', '10'], x_min: -1, x_max: 5, points: [{ x: 3, y: 10, label: 'x = 3' }], placement: `right of ${(at(r, 1).steps as string[])[0]}` }),
-  },
-  {
-    say: 'Now a cycle: how water moves around the planet.',
-    tool: 'draw_diagram',
-    args: {
-      layout: 'cycle',
-      title: 'The water cycle',
-      nodes: [
-        { id: 'evap', label: 'Evaporation' },
-        { id: 'cond', label: 'Condensation' },
-        { id: 'prec', label: 'Precipitation' },
-        { id: 'coll', label: 'Collection' },
-      ],
-      edges: [{ from: 'evap', to: 'cond' }, { from: 'cond', to: 'prec' }, { from: 'prec', to: 'coll' }, { from: 'coll', to: 'evap' }],
-      placement: 'new section',
-    },
-  },
-  { say: 'It starts here: the sun heats water and it evaporates.', tool: 'annotate', args: (r) => ({ target_id: (at(r, 6).nodes as R).evap, mode: 'point', note: 'start here' }) },
-  {
-    say: 'And a classification, drawn as a tree.',
+    say: "Finally, here's how a request moves through a web server.",
     tool: 'draw_diagram',
     args: (r) => ({
-      layout: 'tree',
-      title: 'Numbers',
+      layout: 'flow-right',
       nodes: [
-        { id: 'r', label: 'Real numbers' },
-        { id: 'q', label: 'Rational' },
-        { id: 'i', label: 'Irrational' },
-        { id: 'z', label: 'Integers' },
-        { id: 'f', label: 'Fractions' },
+        { id: 'in', label: 'Request arrives' },
+        { id: 'q', label: 'Waits in a queue' },
+        { id: 'w', label: 'Worker handles it' },
+        { id: 'out', label: 'Response sent' },
       ],
-      edges: [{ from: 'r', to: 'q' }, { from: 'r', to: 'i' }, { from: 'q', to: 'z' }, { from: 'q', to: 'f' }],
-      placement: `right of ${(at(r, 6).nodes as R).cond}`,
+      edges: [{ from: 'in', to: 'q' }, { from: 'q', to: 'w' }, { from: 'w', to: 'out' }],
+      placement: `right of ${stack(r)}`,
     }),
   },
-  {
-    say: 'Your turn: solve this one in the box, then press Done.',
-    tool: 'ask_question',
-    args: { kind: 'write', question: 'Solve for x:', latex: '3x - 5 = 7', placement: 'new section' },
-  },
+  { say: 'First, the request arrives at the server.', tool: 'update_item', args: (r) => ({ id: node(r, 'in'), state: 'active' }) },
+  { say: '', tool: 'update_item', args: (r) => ({ id: node(r, 'in'), state: 'done' }) },
+  { say: 'If every worker is busy, it waits in a queue, first come, first served, exactly like the one we just built.', tool: 'update_item', args: (r) => ({ id: node(r, 'q'), state: 'active' }) },
+  { say: '', tool: 'update_item', args: (r) => ({ id: node(r, 'q'), state: 'done' }) },
+  { say: 'And when a worker is free, it takes the request at the front of the queue.', tool: 'update_item', args: (r) => ({ id: node(r, 'w'), state: 'active' }) },
 ];

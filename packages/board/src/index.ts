@@ -8,3 +8,4 @@ export * from './events';
 export * from "./transform";
 export * from './diagram';
 export * from './routing';
+export * from './structure';

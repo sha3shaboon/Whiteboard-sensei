@@ -4,7 +4,11 @@
 
 import {
   COLORS,
+  applyStructureOp,
   arrowBounds,
+  createStructure,
+  describeStructure,
+  structureSize,
   branchBetween,
   compileExpression,
   curveBetween,
@@ -15,12 +19,13 @@ import {
   union,
   type Board,
   type ArrowPath,
+  type StructureOp,
   type BoardElement,
   type Bounds,
   type DiagramLayout,
   type Region,
 } from '@ai-tutor/board';
-import { SHAPE_FONT, wrapLines, type BoardView } from '@ai-tutor/board/view';
+import { SHAPE_FONT, wrapLines, type BoardView, type DomContent } from '@ai-tutor/board/view';
 import type { ToolDefinition } from './realtime';
 
 const placement = {
@@ -78,6 +83,59 @@ export const TOOLS: ToolDefinition[] = [
       },
       ['layout', 'nodes'],
     ),
+  },
+  {
+    type: 'function',
+    name: 'draw_structure',
+    description:
+      'Draw a data structure that you will then change step by step with structure_op, so the student SEES each operation happen (items slide in and out, pointers move). kinds: "queue" (front on the left, rear on the right), "stack" (bottom to top), "array" (with indexes), "linkedlist" (nodes with next arrows). Use it whenever you teach how a data structure or algorithm works, instead of writing its states as text.',
+    parameters: obj(
+      {
+        kind: { type: 'string', enum: ['queue', 'stack', 'array', 'linkedlist'] },
+        items: { type: 'array', items: { type: 'string' }, description: 'Initial values (may be empty)' },
+        title: { type: 'string' },
+        placement,
+      },
+      ['kind'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'structure_op',
+    description:
+      'Apply ONE operation to a structure drawn with draw_structure; it animates on the board. Explain what is happening while it moves. ops: enqueue/dequeue (queue), push/pop (stack), insert/remove/set at index (array, linkedlist), append (any), highlight (mark an item, e.g. the one being compared), clear_highlight.',
+    parameters: obj(
+      {
+        id: { type: 'string', description: 'The structure id, e.g. "#7"' },
+        op: { type: 'string', enum: ['enqueue', 'dequeue', 'push', 'pop', 'append', 'insert', 'remove', 'set', 'highlight', 'clear_highlight'] },
+        value: { type: 'string' },
+        index: { type: 'number' },
+      },
+      ['id', 'op'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'update_item',
+    description:
+      'Change something already on the board instead of writing it again: relabel a diagram box, change an equation or text in place, or recolor an item to show its state ("active" = the step you are on, "done", "error", "normal"). Use it to show a process advancing, a value changing, or which part you are talking about.',
+    parameters: obj(
+      {
+        id: { type: 'string' },
+        label: { type: 'string', description: 'New label (diagram box / shape)' },
+        latex: { type: 'string', description: 'New LaTeX (math item)' },
+        text: { type: 'string', description: 'New text (text item)' },
+        state: { type: 'string', enum: ['active', 'done', 'error', 'normal'] },
+      },
+      ['id'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'wait_for_student',
+    description:
+      'Call this when you have finished an explanation or worked example, or asked the student something, and now want to wait for them. Until you call it (or ask a question), the lesson keeps flowing: you automatically get the turn back after each reply.',
+    parameters: obj({}, []),
   },
   {
     type: 'function',
@@ -364,6 +422,53 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       return { ok: true, question: ref(qEl), expression: mathId, answer_box: ref(answer) };
     }
 
+    case 'draw_structure': {
+      const kind = (['queue', 'stack', 'array', 'linkedlist'] as const).find((k) => k === args.kind) ?? 'array';
+      const content = createStructure(kind, arr(args.items).map(str).slice(0, 16), COLORS.aiInk, str(args.title) || undefined);
+      return { ok: true, id: ref(place({ type: 'structure', content }, structureSize(content))), state: describeStructure(content) };
+    }
+
+    case 'structure_op': {
+      const el = board.get(id(args.id));
+      if (el?.type !== 'structure') return { ok: false, error: `${args.id} is not a structure; draw one with draw_structure first` };
+      const op = str(args.op);
+      const value = str(args.value);
+      const index = Math.round(num(args.index, NaN));
+      const needsValue = ['enqueue', 'push', 'append', 'insert', 'set'].includes(op);
+      if (needsValue && !value) return { ok: false, error: `${op} needs a value` };
+      const res = applyStructureOp(el.content, { op, value, index } as StructureOp);
+      if (!res.ok) return { ok: false, error: res.error };
+      const size = structureSize(res.content);
+      board.update(el.id, { content: res.content, bounds: { ...el.bounds, width: Math.max(el.bounds.width, size.width), height: Math.max(el.bounds.height, size.height) } }, 'ai');
+      view.ensureVisible(el.bounds);
+      return { ok: true, state: describeStructure(res.content), ...(res.removed !== undefined ? { removed: res.removed } : {}) };
+    }
+
+    case 'update_item': {
+      const el = board.get(id(args.id));
+      if (!el) return { ok: false, error: `Unknown item ${args.id}` };
+      if (el.author !== 'ai') return { ok: false, error: "That's the student's work; annotate it instead of changing it" };
+      const color = STATE_COLORS[str(args.state)];
+      if (el.type === 'shape') {
+        board.update(el.id, { content: { ...el.content, label: args.label !== undefined ? str(args.label) : el.content.label, color: color ?? el.content.color } }, 'ai');
+      } else if (el.type === 'math' || el.type === 'text') {
+        const content = el.type === 'math'
+          ? { ...el.content, latex: args.latex !== undefined ? str(args.latex) : el.content.latex, color: color ?? el.content.color }
+          : { ...el.content, text: args.text !== undefined ? str(args.text) : el.content.text, color: color ?? el.content.color };
+        const size = view.measure({ type: el.type, content } as DomContent);
+        board.update(el.id, { content, bounds: { ...el.bounds, ...size } }, 'ai');
+      } else if (el.type === 'arrow' || el.type === 'table') {
+        if (!color) return { ok: false, error: 'Only state (color) can be changed on this item' };
+        board.update(el.id, { content: { ...el.content, color } as typeof el.content }, 'ai');
+      } else {
+        return { ok: false, error: `Can't update a ${el.type}; use structure_op for structures` };
+      }
+      return { ok: true };
+    }
+
+    case 'wait_for_student':
+      return { ok: true };
+
     case 'draw_shape': {
       const shape = args.shape === 'ellipse' ? 'ellipse' : 'rectangle';
       const label = str(args.label) || undefined;
@@ -407,6 +512,8 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+const STATE_COLORS: Record<string, string> = { active: '#ea580c', done: '#16a34a', error: '#dc2626', normal: COLORS.aiInk };
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 

@@ -1,6 +1,7 @@
 import type { Board } from './board';
 import type { BoardElement, StrokeElement } from './elements';
 import { union } from './geometry';
+import { describeStructure } from './structure';
 
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const r = (n: number) => Math.round(n);
@@ -21,6 +22,8 @@ export function describeContent(el: BoardElement): string {
       return `arrow${el.content.label ? ` "${clip(el.content.label)}"` : ''}`;
     case 'graph':
       return `graph of ${el.content.functions.map((f) => `y = ${f.expression}`).join(', ')}${el.content.points?.length ? ` with points ${el.content.points.map((p) => p.label ?? `(${p.x},${p.y})`).join(', ')}` : ''}`;
+    case 'structure':
+      return `${el.content.title ? `"${clip(el.content.title, 40)}" ` : ''}${describeStructure(el.content)}`;
     case 'table':
       return `table${el.content.title ? ` "${clip(el.content.title, 40)}"` : ''} [${el.content.headers.join(' | ')}] with ${el.content.rows.length} rows`;
     case 'choice': {

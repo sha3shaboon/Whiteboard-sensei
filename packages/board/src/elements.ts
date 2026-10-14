@@ -76,6 +76,7 @@ export type GraphElement = ElementBase<
   'graph',
   { functions: { expression: string; color: string }[]; xRange: [number, number]; points?: PlotPoint[]; title?: string }
 >;
+export type StructureElement = ElementBase<'structure', import('./structure').StructureContent>;
 export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
 /** Clickable multiple-choice card. `selected` is set by the student. */
 export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;
@@ -96,6 +97,7 @@ export type BoardElement =
   | GraphElement
   | CodeElement
   | TableElement
+  | StructureElement
   | ChoiceElement
   | AnswerElement
   | AnnotationElement;
