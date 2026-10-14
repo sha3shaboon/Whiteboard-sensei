@@ -4,7 +4,7 @@ import type { AnnotationElement, AnswerElement, ArrowElement, BoardElement, Boun
 import { compileExpression } from '../expression';
 import { arrowPolyline, lineEnds, regionBounds } from '../geometry';
 
-export const DOM_TYPES = new Set(['text', 'math', 'code', 'table', 'choice']);
+export const DOM_TYPES = new Set(['text', 'math', 'code', 'table', 'choice', 'sketch']);
 export const SHAPE_FONT = 16;
 
 export function strokeWidthAt(base: number, pressure: number): number {
@@ -150,15 +150,39 @@ export function drawLabelPill(ctx: CanvasRenderingContext2D, text: string, at: P
   ctx.restore();
 }
 
-/** Midpoint of the longest segment: the calmest spot for a label. */
-function labelSpot(pts: Point[]): Point {
-  let best = 0, bestLen = -1;
+/**
+ * Draws a label BESIDE an arrow, never on it: next to the middle of its longest segment
+ * (above a horizontal run, to the right of a vertical one), with a thin white halo around the
+ * letters only, so the line stays fully visible.
+ */
+function drawArrowLabel(ctx: CanvasRenderingContext2D, text: string, pts: Point[], color: string) {
+  let best = 1, bestLen = -1;
   for (let i = 1; i < pts.length; i++) {
     const len = Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y);
     if (len > bestLen) { bestLen = len; best = i; }
   }
-  const a = pts[best - 1] ?? pts[0]!, b = pts[best] ?? pts[0]!;
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const a = pts[best - 1]!, b = pts[best]!;
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  // Unit normal pointing up (or right for vertical segments).
+  let nx = -dy / len, ny = dx / len;
+  if (ny > 0 || (Math.abs(ny) < 1e-6 && nx < 0)) { nx = -nx; ny = -ny; }
+  const vertical = Math.abs(dx) < Math.abs(dy);
+  ctx.save();
+  ctx.font = '14px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = vertical ? 'left' : 'center';
+  const off = vertical ? 8 : 12;
+  const x = vertical ? mid.x + Math.abs(nx) * off : mid.x + nx * off;
+  const y = vertical ? mid.y : mid.y + ny * off;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 4;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, progress: number) {
@@ -175,7 +199,7 @@ function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, progress: nu
   ctx.stroke();
   if (progress > 0.15) arrowHead(ctx, end, angle, 11);
   ctx.restore();
-  if (el.content.label && progress >= 1) drawLabelPill(ctx, el.content.label, labelSpot(pts), color);
+  if (el.content.label && progress >= 1) drawArrowLabel(ctx, el.content.label, pts, color);
 }
 
 const fmt = (n: number) => (Math.abs(n) >= 100 || Number.isInteger(n) ? String(Math.round(n)) : n.toFixed(1));

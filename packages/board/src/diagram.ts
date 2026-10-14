@@ -15,10 +15,16 @@ export interface DiagramEdgeIn {
 }
 
 /** Top-left position of each node, relative to the diagram's top-left corner (0,0). */
-export function layoutDiagram(nodes: DiagramNodeIn[], edges: DiagramEdgeIn[], layout: DiagramLayout): Map<string, { x: number; y: number }> {
+export function layoutDiagram(
+  nodes: DiagramNodeIn[],
+  edges: DiagramEdgeIn[],
+  layout: DiagramLayout,
+  /** Extra room between boxes, e.g. for arrow labels. */
+  opts: { hGap?: number; vGap?: number } = {},
+): Map<string, { x: number; y: number }> {
   const out = new Map<string, { x: number; y: number }>();
   if (!nodes.length) return out;
-  const H_GAP = 72, V_GAP = 56;
+  const H_GAP = Math.max(72, opts.hGap ?? 0), V_GAP = Math.max(56, opts.vGap ?? 0);
   const maxW = Math.max(...nodes.map((n) => n.size.width));
   const maxH = Math.max(...nodes.map((n) => n.size.height));
 

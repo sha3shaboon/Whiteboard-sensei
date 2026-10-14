@@ -2,15 +2,16 @@
 // transformed container so it pans and zooms with the canvas.
 
 import katex from 'katex';
-import type { BoardElement, ChoiceElement, CodeElement, MathElement, TableElement, TextElement } from '../elements';
+import type { BoardElement, ChoiceElement, CodeElement, MathElement, SketchElement, TableElement, TextElement } from '../elements';
 
-export type DomElement = TextElement | MathElement | CodeElement | TableElement | ChoiceElement;
+export type DomElement = TextElement | MathElement | CodeElement | TableElement | ChoiceElement | SketchElement;
 export type DomContent =
   | { type: 'text'; content: TextElement['content'] }
   | { type: 'math'; content: MathElement['content'] }
   | { type: 'code'; content: CodeElement['content'] }
   | { type: 'table'; content: TableElement['content'] }
-  | { type: 'choice'; content: ChoiceElement['content'] };
+  | { type: 'choice'; content: ChoiceElement['content'] }
+  | { type: 'sketch'; content: SketchElement['content'] };
 
 /** Inline math inside table cells / choices: text between $...$ is rendered with KaTeX. */
 function richText(text: string): string {
@@ -34,7 +35,7 @@ const letter = (i: number) => String.fromCharCode(65 + i);
 export const MAX_BLOCK_WIDTH = 560;
 
 export function isDomElement(el: BoardElement): el is DomElement {
-  return el.type === 'text' || el.type === 'math' || el.type === 'code' || el.type === 'table' || el.type === 'choice';
+  return el.type === 'text' || el.type === 'math' || el.type === 'code' || el.type === 'table' || el.type === 'choice' || el.type === 'sketch';
 }
 
 /** Fills `node` with the rendered content; returns nothing, styles are inline so measuring works off-board. */
@@ -64,6 +65,15 @@ export function renderDomContent(node: HTMLElement, el: DomContent): void {
       Object.assign(pre.style, { margin: '0', font: '14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap' });
       node.replaceChildren(pre);
       Object.assign(node.style, { background: '#f4f4f1', border: '1px solid #e2e2de', borderRadius: '6px', padding: '8px 12px', color: '#1c1c1a' });
+      break;
+    }
+    case 'sketch': {
+      const c = el.content;
+      // Markup was sanitized when the AI created it (sanitizeSvg); titles are escaped here.
+      node.innerHTML = (c.title ? `<div style="font:600 15px system-ui,sans-serif;color:#2563eb;margin-bottom:4px">${escapeHtml(c.title)}</div>` : '') + c.svg;
+      const svg = node.querySelector('svg');
+      if (svg) Object.assign(svg.style, { display: 'block', width: '100%', height: 'auto', overflow: 'visible' });
+      Object.assign(node.style, { padding: '0' });
       break;
     }
     case 'table': {

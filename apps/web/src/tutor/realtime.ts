@@ -39,6 +39,9 @@ class AccessCodeError extends Error {}
 /** Replies the tutor may chain on its own before it must wait for the student. */
 const MAX_AUTO_CONTINUES = 24;
 
+const SHOW_IT =
+  '[Coach] You just explained something by voice only. In this next step, show it on the board: a sketch of the setup or object (draw_sketch), a diagram, the key equation or law, a short key point, or a change to something already there. Explain while it appears.';
+
 const CONNECT_TIMEOUT_MS = 20_000;
 const LINK_FAILED =
   "Couldn't open the audio connection to the tutor. Your network may block voice calls (WebRTC); try another network or turn off a VPN.";
@@ -86,6 +89,11 @@ export class RealtimeClient {
   private lastAssistantText = '';
   private speechOnlyStreak = 0;
   private autoContinues = 0;
+  /** The next automatic step must include a board action (after a talk-only reply). */
+  private continueRequireTool = false;
+  private lastCreateRequiredTool = false;
+  private requiredToolSupported = true;
+  private systemRoleSupported = true;
   // Pacing: the AI teaches one step per response. After a step that used the board, we hand it the
   // turn again only once its voice has finished playing, so the board never runs ahead of the narration.
   private responseActive = false;
@@ -253,13 +261,26 @@ export class RealtimeClient {
     clearTimeout(this.gapTimer);
   }
 
-  /** Whether the tutor should keep going after a completed reply. */
-  private shouldContinue(usedTools: boolean): boolean {
+  /**
+   * What to do after a completed reply: stop (it asked the student / called wait_for_student),
+   * go on, or go on and require the next step to put something on the board (it only talked).
+   */
+  private nextStep(usedTools: boolean): 'stop' | 'go' | 'show' {
     const askedStudent = /\?\s*$/.test(this.lastAssistantText.trim());
-    if (this.waitRequested || askedStudent) return false;
-    if (usedTools) this.speechOnlyStreak = 0;
-    else if (++this.speechOnlyStreak > 1) return false; // two talking-only replies in a row: let the student in
-    return ++this.autoContinues <= MAX_AUTO_CONTINUES;
+    if (this.waitRequested || askedStudent) return 'stop';
+    if (++this.autoContinues > MAX_AUTO_CONTINUES) return 'stop';
+    if (usedTools) {
+      this.speechOnlyStreak = 0;
+      return 'go';
+    }
+    // Talked without the board: the next step must show it. If that still doesn't happen, let the student in.
+    return ++this.speechOnlyStreak > 2 ? 'stop' : 'show';
+  }
+
+  /** Operator note to the model (system role; falls back to a user-role note if unsupported). */
+  addSystemNote(text: string): void {
+    const role = this.systemRoleSupported ? 'system' : 'user';
+    this.send({ type: 'conversation.item.create', item: { type: 'message', role, content: [{ type: 'input_text', text }] } });
   }
 
   /** The student did something: the tutor's flow budget starts over. */
@@ -268,7 +289,8 @@ export class RealtimeClient {
     this.speechOnlyStreak = 0;
   }
 
-  private scheduleContinue(): void {
+  private scheduleContinue(requireTool = false): void {
+    this.continueRequireTool = requireTool;
     this.continuePending = true;
     clearTimeout(this.continueTimer);
     // Safety net in case the "audio stopped" event never arrives.
@@ -281,8 +303,11 @@ export class RealtimeClient {
     if (this.speaking && !force) return;
     this.cancelContinue();
     // A short, natural pause between steps (also a window for the student to jump in).
+    const requireTool = this.continueRequireTool && this.requiredToolSupported;
     this.gapTimer = setTimeout(() => {
-      if (!this.paused && !this.userSpeaking && !this.responseActive) this.send({ type: 'response.create' });
+      if (this.paused || this.userSpeaking || this.responseActive) return;
+      this.lastCreateRequiredTool = requireTool;
+      this.send(requireTool ? { type: 'response.create', response: { tool_choice: 'required' } } : { type: 'response.create' });
     }, 400);
   }
 
@@ -363,13 +388,24 @@ export class RealtimeClient {
       const usedTools = this.pendingToolOutputs || (r.output ?? []).some((i: { type?: string }) => i.type === 'function_call');
       if (!interrupted) {
         this.h.onResponseDone?.(usedTools);
-        if (this.shouldContinue(usedTools)) this.scheduleContinue();
+        const next = this.nextStep(usedTools);
+        if (next === 'show') this.addSystemNote(SHOW_IT);
+        if (next !== 'stop') this.scheduleContinue(next === 'show');
       }
       this.pendingToolOutputs = false;
       this.waitRequested = false;
       this.lastAssistantText = '';
     } else if (t === 'error') {
       console.warn('Realtime error', ev.error);
+      const msg = `${ev.error?.message ?? ''} ${ev.error?.param ?? ''}`;
+      // Feature fallbacks: if the API rejects a forced tool or a system note, stop using them.
+      if (/tool_choice/i.test(msg) && this.lastCreateRequiredTool) {
+        this.requiredToolSupported = false;
+        this.lastCreateRequiredTool = false;
+        if (!this.responseActive) this.send({ type: 'response.create' });
+      } else if (/role/i.test(msg) && /system/i.test(msg)) {
+        this.systemRoleSupported = false;
+      }
     }
   }
 }

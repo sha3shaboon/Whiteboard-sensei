@@ -25,7 +25,7 @@ import {
   type DiagramLayout,
   type Region,
 } from '@ai-tutor/board';
-import { SHAPE_FONT, wrapLines, type BoardView, type DomContent } from '@ai-tutor/board/view';
+import { SHAPE_FONT, sanitizeSvg, wrapLines, type BoardView, type DomContent } from '@ai-tutor/board/view';
 import type { ToolDefinition } from './realtime';
 
 const placement = {
@@ -86,6 +86,23 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     type: 'function',
+    name: 'draw_sketch',
+    description:
+      'Draw an illustration of a physical setup, object or scene, as SVG. Use it to SHOW things instead of describing them: a coil of wire with its loops and a magnet, field lines around a magnet, eddy-current loops in a metal plate, forces on a block on a slope, a circuit, a lens and light rays, a cell, a heart, a molecule, a geometric figure. ' +
+      'Write one <svg viewBox="0 0 400 300"> (any size) using path, line, polyline, polygon, circle, ellipse, rect, text and g. Keep it clean and schematic like a teacher\'s drawing: dark outlines (stroke="#1c1c1a"), blue for the main subject (#2563eb), red for currents/forces (#dc2626), green (#16a34a) or orange (#ea580c) for highlights, light fills (e.g. fill="#dbeafe"), labels as <text> with font-size 13-16. ' +
+      'Arrowheads: marker-end="url(#arrow)" (also #arrow-red, #arrow-blue, #arrow-green, #arrow-orange). Give each part an id (id="magnet", id="loop1"): you can then add to or change the picture with update_item(svg) by sending the full new SVG with the same ids, and only new parts are drawn. Parts are drawn in the order you write them, so write them in the order you explain them.',
+    parameters: obj(
+      {
+        svg: { type: 'string', description: 'A single <svg viewBox="0 0 W H">…</svg> element' },
+        title: { type: 'string' },
+        width: { type: 'number', description: 'Width on the board, 240-800 (default 440)' },
+        placement,
+      },
+      ['svg'],
+    ),
+  },
+  {
+    type: 'function',
     name: 'draw_structure',
     description:
       'Draw a data structure that you will then change step by step with structure_op, so the student SEES each operation happen (items slide in and out, pointers move). kinds: "queue" (front on the left, rear on the right), "stack" (bottom to top), "array" (with indexes), "linkedlist" (nodes with next arrows). Use it whenever you teach how a data structure or algorithm works, instead of writing its states as text.',
@@ -118,7 +135,7 @@ export const TOOLS: ToolDefinition[] = [
     type: 'function',
     name: 'update_item',
     description:
-      'Change something already on the board instead of writing it again: relabel a diagram box, change an equation or text in place, or recolor an item to show its state ("active" = the step you are on, "done", "error", "normal"). Use it to show a process advancing, a value changing, or which part you are talking about.',
+      'Change something already on the board instead of writing it again: relabel a diagram box, change an equation or text in place, add to or change a sketch (svg), or recolor an item to show its state ("active" = the step you are on, "done", "error", "normal"). Use it to show a process advancing, a value changing, or which part you are talking about.',
     parameters: obj(
       {
         id: { type: 'string' },
@@ -126,6 +143,7 @@ export const TOOLS: ToolDefinition[] = [
         latex: { type: 'string', description: 'New LaTeX (math item)' },
         text: { type: 'string', description: 'New text (text item)' },
         state: { type: 'string', enum: ['active', 'done', 'error', 'normal'] },
+        svg: { type: 'string', description: 'For sketches: the full new SVG. Keep the ids of parts that stay; new parts are drawn in, missing ones disappear.' },
       },
       ['id'],
     ),
@@ -356,7 +374,9 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       const edges = arr<{ from?: unknown; to?: unknown; label?: unknown }>(args.edges)
         .map((e) => ({ from: str(e?.from), to: str(e?.to), label: str(e?.label) || undefined }))
         .filter((e) => keys.has(e.from) && keys.has(e.to) && e.from !== e.to);
-      const pos = layoutDiagram(sized, edges, layout);
+      // Labeled arrows need room between boxes so the label sits beside the arrow, not on a box.
+      const longestLabel = Math.max(0, ...edges.map((e) => (e.label ? e.label.length * 7.6 + 24 : 0)));
+      const pos = layoutDiagram(sized, edges, layout, { hGap: longestLabel, vGap: longestLabel ? 64 : 0 });
       const boxes = sized.map((n) => ({ ...pos.get(n.key)!, ...n.size }));
       const area = union(boxes)!;
       const title = str(args.title) ? measureText(str(args.title), 'title') : null;
@@ -422,6 +442,17 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       return { ok: true, question: ref(qEl), expression: mathId, answer_box: ref(answer) };
     }
 
+    case 'draw_sketch': {
+      const prefix = `sk${Math.random().toString(36).slice(2, 8)}-`;
+      const res = sanitizeSvg(str(args.svg), prefix);
+      if ('error' in res) return { ok: false, error: res.error };
+      const width = Math.min(800, Math.max(240, num(args.width, 440)));
+      const title = str(args.title) || undefined;
+      const size = { width, height: Math.round((width * res.vh) / res.vw) + (title ? 26 : 0) };
+      const el = place({ type: 'sketch', content: { svg: res.svg, vw: res.vw, vh: res.vh, prefix, parts: res.parts, title } }, size);
+      return { ok: true, id: ref(el), parts: res.parts };
+    }
+
     case 'draw_structure': {
       const kind = (['queue', 'stack', 'array', 'linkedlist'] as const).find((k) => k === args.kind) ?? 'array';
       const content = createStructure(kind, arr(args.items).map(str).slice(0, 16), COLORS.aiInk, str(args.title) || undefined);
@@ -449,6 +480,14 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       if (!el) return { ok: false, error: `Unknown item ${args.id}` };
       if (el.author !== 'ai') return { ok: false, error: "That's the student's work; annotate it instead of changing it" };
       const color = STATE_COLORS[str(args.state)];
+      if (el.type === 'sketch') {
+        if (!str(args.svg)) return { ok: false, error: 'Send the full new svg to change a sketch' };
+        const res = sanitizeSvg(str(args.svg), el.content.prefix);
+        if ('error' in res) return { ok: false, error: res.error };
+        const height = Math.round((el.bounds.width * res.vh) / res.vw) + (el.content.title ? 26 : 0);
+        board.update(el.id, { content: { ...el.content, svg: res.svg, vw: res.vw, vh: res.vh, parts: res.parts }, bounds: { ...el.bounds, height } }, 'ai');
+        return { ok: true, parts: res.parts };
+      }
       if (el.type === 'shape') {
         board.update(el.id, { content: { ...el.content, label: args.label !== undefined ? str(args.label) : el.content.label, color: color ?? el.content.color } }, 'ai');
       } else if (el.type === 'math' || el.type === 'text') {

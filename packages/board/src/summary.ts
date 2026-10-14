@@ -24,6 +24,8 @@ export function describeContent(el: BoardElement): string {
       return `graph of ${el.content.functions.map((f) => `y = ${f.expression}`).join(', ')}${el.content.points?.length ? ` with points ${el.content.points.map((p) => p.label ?? `(${p.x},${p.y})`).join(', ')}` : ''}`;
     case 'structure':
       return `${el.content.title ? `"${clip(el.content.title, 40)}" ` : ''}${describeStructure(el.content)}`;
+    case 'sketch':
+      return `sketch${el.content.title ? ` "${clip(el.content.title, 50)}"` : ''}${el.content.parts.length ? ` with parts ${el.content.parts.slice(0, 20).join(', ')}` : ''}`;
     case 'table':
       return `table${el.content.title ? ` "${clip(el.content.title, 40)}"` : ''} [${el.content.headers.join(' | ')}] with ${el.content.rows.length} rows`;
     case 'choice': {

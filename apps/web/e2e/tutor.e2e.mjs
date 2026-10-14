@@ -11,6 +11,8 @@ const errors = [];
 p.on('pageerror', (e) => errors.push(e.message));
 
 // Fake Realtime peer: records client events, replies with scripted server events.
+const REJECT_REQUIRED = !!process.env.REJECT_REQUIRED;
+if (REJECT_REQUIRED) await p.addInitScript(() => { window.__rejectRequired = true; });
 await p.addInitScript(() => {
   window.__sent = [];
   let responses = 0;
@@ -34,6 +36,11 @@ await p.addInitScript(() => {
       if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'LONG') this.nextLong = true;
       if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'WAIT') this.nextWait = true;
       if (ev.type !== 'response.create') return;
+      if (ev.response?.tool_choice === 'required' && window.__rejectRequired) {
+        // Simulates an API that doesn't accept a forced tool on response.create.
+        this.server({ type: 'error', error: { type: 'invalid_request_error', message: "Invalid value for 'response.tool_choice'", param: 'response.tool_choice' } });
+        return;
+      }
       const n = ++responses;
       const rid = 'resp' + n, item = 'item' + n;
       if (this.nextLong) {
@@ -63,6 +70,7 @@ await p.addInitScript(() => {
         this.server({ type: 'response.output_audio_transcript.done', item_id: item, transcript: 'Hi! What would you like to learn today? Let me write an example.' });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call1', name: 'write_math', arguments: JSON.stringify({ latex: '3x + 2 = 14' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call2', name: 'ask_question', arguments: JSON.stringify({ kind: 'write', question: 'Solve for x', placement: 'right of #1' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call4', name: 'draw_sketch', arguments: JSON.stringify({ svg: '<svg viewBox="0 0 200 100"><script>window.__pwned=1</script><circle id="coil" cx="50" cy="50" r="30" onclick="window.__pwned=1"/><line id="wire" x1="80" y1="50" x2="190" y2="50" marker-end="url(#arrow)"/></svg>', placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call3', name: 'ask_question', arguments: JSON.stringify({ kind: 'choice', question: 'What is 2 + 2?', choices: ['3', '4', '5'], placement: 'right of #3' }) });
         this.server({ type: 'response.done', response: { id: rid, output: [{ type: 'function_call', call_id: 'call1', name: 'write_math', arguments: '{}' }], usage: { input_token_details: { audio_tokens: 100, text_tokens: 50 }, output_token_details: { audio_tokens: 300, text_tokens: 20 } } } });
       } else {
@@ -169,12 +177,24 @@ check('typing during a reply cancels it first', (() => {
 })());
 check('pause stops the reply and shows Paused', pausedLabel?.includes('Paused'));
 check('continue asks the tutor to go on', texts.some((t) => t.startsWith('[Student] Please continue')));
-check('a talking-only step still continues once, then lets the student in', (() => {
-  // resp1 (tools) -> auto resp2 ("Reply 2", talk only) -> auto resp3 -> stop before any student action
+const beforeStudent = (() => {
   const firstStudent = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text?.startsWith('[Board] Student'));
-  const autos = sent.slice(0, firstStudent === -1 ? undefined : firstStudent).filter((e) => e.type === 'response.create').length;
-  return autos === 3; // greeting + 2 automatic continues
+  return sent.slice(0, firstStudent === -1 ? undefined : firstStudent);
+})();
+if (REJECT_REQUIRED) check('falls back to a normal reply when forced tools are rejected', (() => {
+  const i = beforeStudent.findIndex((e) => e.response?.tool_choice === 'required');
+  return i > 0 && beforeStudent.slice(i + 1).some((e) => e.type === 'response.create' && !e.response);
 })());
+else check('after talk-only replies the next step must use the board, then the student gets the turn', (() => {
+  // greeting+tools -> resp2 (talk) -> forced resp3 (talk) -> forced resp4 (talk) -> stop
+  const creates = beforeStudent.filter((e) => e.type === 'response.create');
+  return creates.length === 4 && creates.slice(2).every((e) => e.response?.tool_choice === 'required') && !creates[1].response;
+})());
+check('coach notes use the system role', beforeStudent.some((e) => e.type === 'conversation.item.create' && e.item.role === 'system' && e.item.content[0].text.startsWith('[Coach]')));
+check('sketch rendered, sanitized and namespaced', await p.evaluate(() => {
+  const svg = document.querySelector('.board-sketch svg');
+  return !!svg && !svg.querySelector('script') && !svg.querySelector('[onclick]') && !window.__pwned && !!svg.querySelector('[data-k="coil"]') && /url\(#sk[a-z0-9]+-arrow\)/.test(svg.innerHTML);
+}));
 check('wait_for_student stops the flow', afterWait.filter((t) => t === 'response.create').length === 1);
 check('session.update includes structure tools', ['draw_structure', 'structure_op', 'update_item', 'wait_for_student'].every((n) => sent[0].session.tools.some((t) => t.name === n)));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));

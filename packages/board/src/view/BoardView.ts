@@ -8,6 +8,7 @@ import { translated } from '../transform';
 import { DOM_TYPES, drawArrowLine, drawElement, drawStrokePoints } from './draw';
 import { isDomElement, Measurer, renderDomContent, type DomContent } from './overlay';
 import { drawStructure } from './structure';
+import { animateSketch, sketchKeys } from './sketch';
 import type { StructureContent } from '../structure';
 
 export type Tool = 'pen' | 'highlighter' | 'eraser' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'arrow' | 'select' | 'pan';
@@ -191,7 +192,7 @@ export class BoardView {
   private animateUpdate(before: BoardElement, after: BoardElement): void {
     if (before.type === 'structure' && after.type === 'structure') {
       this.transitions.set(after.id, { from: before.content, fromBounds: before.bounds, start: performance.now(), dur: 900 });
-    } else if (isDomElement(after)) {
+    } else if (isDomElement(after) && after.type !== 'sketch') {
       this.reveals.delete(after.id);
       this.scheduleReveal(after); // re-written in place
     }
@@ -229,9 +230,17 @@ export class BoardView {
       Object.assign(node.style, { position: 'absolute', left: `${el.bounds.x + el.bounds.width}px`, top: `${el.bounds.y + el.bounds.height}px`, width: '0', height: '0', pointerEvents: 'auto' });
       return;
     }
+    // Sketches draw in stroke by stroke; on an update only their new parts are drawn.
+    const previous = el.type === 'sketch' && node.dataset.svg ? sketchKeys(node) : null;
+    const sketchChanged = el.type === 'sketch' && node.dataset.svg !== el.content.svg;
     renderDomContent(node, el);
+    node.dataset.kind = el.type;
     Object.assign(node.style, { left: `${el.bounds.x}px`, top: `${el.bounds.y}px`, width: `${el.bounds.width}px`, minHeight: `${el.bounds.height}px`, transform: '' });
     if (interactive) node.style.pointerEvents = 'auto';
+    if (el.type === 'sketch' && sketchChanged) {
+      node.dataset.svg = el.content.svg;
+      if (el.author === 'ai') animateSketch(node, previous ?? undefined);
+    }
   }
 
   /** Student clicks on interactive items become ordinary student changes (so the AI hears about them). */
@@ -301,8 +310,9 @@ export class BoardView {
       const p = this.progress(id, now);
       // Text, math and tables are "written" left to right; interactive cards fade in.
       const interactive = node.dataset.interactive !== undefined;
-      node.style.opacity = fade ? '0.25' : interactive ? String(p) : p <= 0 ? '0' : '1';
-      node.style.clipPath = !interactive && p < 1 ? `inset(-4px ${(1 - easeOut(p)) * 100}% -4px -4px)` : '';
+      const selfAnimated = node.dataset.kind === 'sketch'; // draws its own strokes in
+      node.style.opacity = fade ? '0.25' : interactive ? String(p) : p <= 0 && !selfAnimated ? '0' : '1';
+      node.style.clipPath = !interactive && !selfAnimated && p < 1 ? `inset(-4px ${(1 - easeOut(p)) * 100}% -4px -4px)` : '';
       node.style.transform = g?.kind === 'move' && g.id === id ? `translate(${g.dx}px, ${g.dy}px)` : '';
     }
 

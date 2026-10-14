@@ -77,6 +77,8 @@ export type GraphElement = ElementBase<
   { functions: { expression: string; color: string }[]; xRange: [number, number]; points?: PlotPoint[]; title?: string }
 >;
 export type StructureElement = ElementBase<'structure', import('./structure').StructureContent>;
+/** Free-form illustration: sanitized SVG drawn in stroke by stroke (see view/sketch.ts). */
+export type SketchElement = ElementBase<'sketch', { svg: string; vw: number; vh: number; prefix: string; parts: string[]; title?: string }>;
 export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
 /** Clickable multiple-choice card. `selected` is set by the student. */
 export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;
@@ -98,6 +100,7 @@ export type BoardElement =
   | CodeElement
   | TableElement
   | StructureElement
+  | SketchElement
   | ChoiceElement
   | AnswerElement
   | AnnotationElement;
