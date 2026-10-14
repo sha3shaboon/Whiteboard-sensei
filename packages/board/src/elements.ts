@@ -55,7 +55,20 @@ export type TextElement = ElementBase<'text', { text: string; fontSize: number; 
 export type MathElement = ElementBase<'math', { latex: string; fontSize: number; color: string }>;
 export type ShapeElement = ElementBase<'shape', { shape: 'rectangle' | 'ellipse' | 'line'; color: string; label?: string; /** Line runs bottom-left to top-right. */ flip?: boolean }>;
 export type ArrowElement = ElementBase<'arrow', { from: Point; to: Point; color: string; label?: string }>;
-export type GraphElement = ElementBase<'graph', { expression: string; xRange: [number, number]; color: string }>;
+export interface PlotPoint {
+  x: number;
+  y: number;
+  label?: string;
+}
+export type GraphElement = ElementBase<
+  'graph',
+  { functions: { expression: string; color: string }[]; xRange: [number, number]; points?: PlotPoint[]; title?: string }
+>;
+export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
+/** Clickable multiple-choice card. `selected` is set by the student. */
+export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;
+/** Dashed box the student answers in, with a Done button. `submissions` counts presses of Done. */
+export type AnswerElement = ElementBase<'answer', { prompt?: string; question?: ElementId; submissions?: number }>;
 export type CodeElement = ElementBase<'code', { language: string; code: string }>;
 export type AnnotationElement = ElementBase<
   'annotation',
@@ -70,6 +83,9 @@ export type BoardElement =
   | ArrowElement
   | GraphElement
   | CodeElement
+  | TableElement
+  | ChoiceElement
+  | AnswerElement
   | AnnotationElement;
 
 export type ElementType = BoardElement['type'];
@@ -79,4 +95,6 @@ export const COLORS = {
   aiInk: '#2563eb',
   highlighter: 'rgba(250, 204, 21, 0.4)',
   annotation: '#dc2626',
+  /** Extra curve colors for multi-function graphs. */
+  series: ['#2563eb', '#dc2626', '#16a34a', '#9333ea'],
 } as const;

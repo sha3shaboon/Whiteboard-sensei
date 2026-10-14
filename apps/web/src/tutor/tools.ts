@@ -1,168 +1,381 @@
 // The AI's whiteboard commands (function calls) and how they're executed on the board.
 // Placement is relative ("below #12"); the board computes exact positions and avoids overlap.
+// The tool set is designed so that visual, interactive teaching is the easy path for the model.
 
-import { COLORS, center, compileExpression, resolvePlacement, type Board, type BoardElement, type Bounds, type Point, type Region } from '@ai-tutor/board';
-import type { BoardView } from '@ai-tutor/board/view';
+import {
+  COLORS,
+  center,
+  compileExpression,
+  layoutDiagram,
+  resolvePlacement,
+  union,
+  type Board,
+  type BoardElement,
+  type Bounds,
+  type DiagramLayout,
+  type Point,
+  type Region,
+} from '@ai-tutor/board';
+import { SHAPE_FONT, wrapLines, type BoardView } from '@ai-tutor/board/view';
 import type { ToolDefinition } from './realtime';
 
 const placement = {
   type: 'string',
-  description: 'Where to put it, relative to existing items: "below #12", "right of #7", "above #3", "new section", or omit to continue under your last item.',
+  description: 'Where to put it, relative to existing items: "below #12", "right of #7", "above #3", "new section" (starts a new area for a new idea), or omit to continue under your last item.',
 };
+const obj = (properties: Record<string, unknown>, required: string[]) => ({ type: 'object', properties, required });
 
 export const TOOLS: ToolDefinition[] = [
   {
     type: 'function',
-    name: 'write_text',
-    description: 'Write a short text block on the whiteboard (a heading, a step label, a key idea). Keep it short; say details aloud.',
-    parameters: { type: 'object', properties: { text: { type: 'string' }, placement }, required: ['text'] },
+    name: 'write_steps',
+    description:
+      'Write a worked solution or derivation as a sequence of math lines, each with an optional short note explaining the move (e.g. "subtract 4 from both sides"). Use this whenever you solve or transform anything step by step. Each step gets its own id so you can point at it later.',
+    parameters: obj(
+      {
+        steps: {
+          type: 'array',
+          items: obj({ latex: { type: 'string', description: 'LaTeX, no $ delimiters' }, note: { type: 'string', description: 'Optional, under 8 words' } }, ['latex']),
+        },
+        title: { type: 'string', description: 'Optional short heading above the steps' },
+        placement,
+      },
+      ['steps'],
+    ),
   },
   {
     type: 'function',
     name: 'write_math',
-    description: 'Write a math expression or equation on the whiteboard. Use one call per line/step.',
-    parameters: { type: 'object', properties: { latex: { type: 'string', description: 'LaTeX without $ delimiters' }, placement }, required: ['latex'] },
+    description: 'Write a single formula or equation (a definition, a key result, the problem statement). For several steps use write_steps.',
+    parameters: obj({ latex: { type: 'string', description: 'LaTeX without $ delimiters' }, placement }, ['latex']),
+  },
+  {
+    type: 'function',
+    name: 'draw_diagram',
+    description:
+      'Draw a diagram of boxes connected by arrows, laid out automatically. Use it for processes and cycles (photosynthesis, water cycle, an algorithm), cause and effect, timelines, hierarchies and classifications, concept maps, parts of a system. Layouts: "flow-right" (sequence/timeline), "flow-down" (steps), "tree" (hierarchy/classification), "cycle" (repeating process), "hub" (central idea with related ideas; the first node is the center).',
+    parameters: obj(
+      {
+        layout: { type: 'string', enum: ['flow-right', 'flow-down', 'tree', 'cycle', 'hub'] },
+        title: { type: 'string' },
+        nodes: {
+          type: 'array',
+          items: obj(
+            {
+              id: { type: 'string', description: 'Short key you choose, used in edges' },
+              label: { type: 'string', description: 'Up to ~6 words' },
+              shape: { type: 'string', enum: ['rectangle', 'ellipse'] },
+            },
+            ['id', 'label'],
+          ),
+        },
+        edges: { type: 'array', items: obj({ from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' } }, ['from', 'to']) },
+        placement,
+      },
+      ['layout', 'nodes'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'make_table',
+    description:
+      'Draw a table: comparisons (mitosis vs meiosis), properties, verb conjugations, vocabulary, data, truth tables, dates and events. Cells may contain inline math between $...$.',
+    parameters: obj(
+      {
+        title: { type: 'string' },
+        headers: { type: 'array', items: { type: 'string' } },
+        rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+        placement,
+      },
+      ['headers', 'rows'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'plot',
+    description:
+      'Draw a graph of one or more functions y = f(x), optionally marking points (roots, intersections, maxima). Expressions use x, + - * / ^, sin cos tan sqrt abs ln log exp, pi, e. Example: functions ["x^2 - 4", "2x - 1"], points [{x:2, y:0, label:"root"}].',
+    parameters: obj(
+      {
+        functions: { type: 'array', items: { type: 'string' } },
+        x_min: { type: 'number' },
+        x_max: { type: 'number' },
+        points: { type: 'array', items: obj({ x: { type: 'number' }, y: { type: 'number' }, label: { type: 'string' } }, ['x', 'y']) },
+        title: { type: 'string' },
+        placement,
+      },
+      ['functions'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'ask_question',
+    description:
+      'Ask the student to do something ON THE BOARD. kind "write": shows the question with an answer box; the student writes or draws inside it and presses Done, and you will get an [Answer] message with what they wrote. kind "choice": shows a clickable multiple-choice card; you get an [Answer] message when they pick. Use this often: after explaining an idea, to check understanding, and for practice problems. After calling it, briefly invite them to answer and then wait.',
+    parameters: obj(
+      {
+        question: { type: 'string', description: 'The question. Inline math between $...$ (choice cards) or plain text.' },
+        kind: { type: 'string', enum: ['write', 'choice'] },
+        choices: { type: 'array', items: { type: 'string' }, description: 'For kind "choice": 2-5 options' },
+        latex: { type: 'string', description: 'Optional: an expression to show with a "write" question, e.g. the equation to solve' },
+        placement,
+      },
+      ['question', 'kind'],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'write_text',
+    description: 'Only for titles, headings and short labels (at most ~10 words). Never write sentences or paragraphs: say explanations aloud and put the structure on the board with the other tools.',
+    parameters: obj({ text: { type: 'string' }, style: { type: 'string', enum: ['title', 'label'] }, placement }, ['text']),
   },
   {
     type: 'function',
     name: 'write_code',
-    description: 'Write a code snippet on the whiteboard.',
-    parameters: { type: 'object', properties: { code: { type: 'string' }, language: { type: 'string' }, placement }, required: ['code'] },
-  },
-  {
-    type: 'function',
-    name: 'plot_function',
-    description: 'Draw a graph of y = f(x). Expression uses x, + - * / ^, sin cos tan sqrt abs ln log exp, pi, e. Example: "x^2 - 4x + 3".',
-    parameters: {
-      type: 'object',
-      properties: { expression: { type: 'string' }, x_min: { type: 'number' }, x_max: { type: 'number' }, placement },
-      required: ['expression'],
-    },
+    description: 'Write a code snippet.',
+    parameters: obj({ code: { type: 'string' }, language: { type: 'string' }, placement }, ['code']),
   },
   {
     type: 'function',
     name: 'draw_shape',
-    description: 'Draw a labeled box or circle, e.g. for diagrams (a cell, a node in a flow, a planet).',
-    parameters: {
-      type: 'object',
-      properties: {
-        shape: { type: 'string', enum: ['rectangle', 'ellipse'] },
-        label: { type: 'string' },
-        width: { type: 'number', description: 'Default 160' },
-        height: { type: 'number', description: 'Default 80' },
-        placement,
-      },
-      required: ['shape'],
-    },
+    description: 'Draw one labeled box or circle (for diagrams prefer draw_diagram).',
+    parameters: obj(
+      { shape: { type: 'string', enum: ['rectangle', 'ellipse'] }, label: { type: 'string' }, width: { type: 'number' }, height: { type: 'number' }, placement },
+      ['shape'],
+    ),
   },
   {
     type: 'function',
     name: 'draw_arrow',
-    description: 'Draw an arrow from one item to another (by id), optionally labeled.',
-    parameters: { type: 'object', properties: { from_id: { type: 'string' }, to_id: { type: 'string' }, label: { type: 'string' } }, required: ['from_id', 'to_id'] },
+    description: 'Draw an arrow from one item to another (by id), optionally labeled. Great for connecting the student\'s work to yours.',
+    parameters: obj({ from_id: { type: 'string' }, to_id: { type: 'string' }, label: { type: 'string' } }, ['from_id', 'to_id']),
   },
   {
     type: 'function',
     name: 'annotate',
     description:
-      "Point at, circle or highlight an existing item, including the student's handwriting. Use region to target part of it, as fractions of its bounding box: {x0:0.6,x1:0.8,y0:0,y1:1} is the right part. Add a short note if useful.",
-    parameters: {
-      type: 'object',
-      properties: {
+      "Point at, circle or highlight an existing item, including the student's handwriting, with an optional short note. Use region to target part of it, as fractions of its box: {x0:0.6,x1:0.8,y0:0,y1:1} is the right part. Use this whenever you refer to something on the board, and to mark mistakes in the student's work.",
+    parameters: obj(
+      {
         target_id: { type: 'string' },
         mode: { type: 'string', enum: ['circle', 'highlight', 'point'] },
-        region: { type: 'object', properties: { x0: { type: 'number' }, x1: { type: 'number' }, y0: { type: 'number' }, y1: { type: 'number' } } },
+        region: obj({ x0: { type: 'number' }, x1: { type: 'number' }, y0: { type: 'number' }, y1: { type: 'number' } }, []),
         note: { type: 'string' },
       },
-      required: ['target_id', 'mode'],
-    },
+      ['target_id', 'mode'],
+    ),
   },
   {
     type: 'function',
     name: 'erase',
-    description: 'Erase one of your own items (by id). Do not erase the student\'s work unless they ask.',
-    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    description: "Erase one of your own items (by id). Don't erase the student's work unless they ask.",
+    parameters: obj({ id: { type: 'string' } }, ['id']),
   },
 ];
 
 type Args = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
-const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() && Number.isFinite(Number(v)) ? Number(v) : d);
+const arr = <T = unknown>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 const id = (v: unknown) => str(v).replace(/^#/, '');
+const ref = (el: { id: string }) => `#${el.id}`;
 
-export interface ToolResult {
-  ok: boolean;
-  id?: string;
-  error?: string;
-}
+export type ToolResult = { ok: true; [key: string]: unknown } | { ok: false; error: string };
+
+type NewElement = Omit<BoardElement, 'id' | 'bounds' | 'createdAt' | 'updatedAt' | 'author'>;
 
 /** Executes one AI tool call against the board. */
 export function executeTool(board: Board, view: BoardView, name: string, args: Args): ToolResult {
   const now = Date.now();
-  const base = { author: 'ai' as const, createdAt: now, updatedAt: now };
+  const meta = { author: 'ai' as const, createdAt: now, updatedAt: now };
 
-  const place = (el: Omit<BoardElement, 'bounds' | 'id'> & { size: { width: number; height: number } }): ToolResult => {
-    const pos = resolvePlacement(board, el.size, str(args.placement) || undefined, view.getViewport());
-    const { size, ...rest } = el;
-    const element = { ...rest, id: board.nextId(), bounds: { ...pos, ...size } } as BoardElement;
+  /** Adds an element at an exact position. */
+  const addAt = (el: NewElement, bounds: Bounds): BoardElement => {
+    const element = { ...el, ...meta, id: board.nextId(), bounds } as BoardElement;
     board.add(element, 'ai');
+    return element;
+  };
+  /** Adds one element where `placement` says, avoiding overlaps. */
+  const place = (el: NewElement, size: { width: number; height: number }, where = str(args.placement)): BoardElement => {
+    const pos = resolvePlacement(board, size, where || undefined, view.getViewport());
+    const element = addAt(el, { ...pos, ...size });
     view.ensureVisible(element.bounds);
-    return { ok: true, id: `#${element.id}` };
+    return element;
+  };
+  const measureText = (text: string, style: 'title' | 'label' | 'note' = 'label') => {
+    const content = { text, fontSize: style === 'title' ? 26 : style === 'note' ? 16 : 20, color: style === 'note' ? '#5b7bbf' : COLORS.aiInk };
+    return { content, size: view.measure({ type: 'text', content }) };
   };
 
   switch (name) {
     case 'write_text': {
-      const content = { text: str(args.text), fontSize: 22, color: COLORS.aiInk };
-      return place({ ...base, type: 'text', content, size: view.measure({ type: 'text', content }) });
+      const style = args.style === 'title' ? 'title' : 'label';
+      const { content, size } = measureText(str(args.text), style);
+      return { ok: true, id: ref(place({ type: 'text', content }, size)) };
     }
+
     case 'write_math': {
       const content = { latex: str(args.latex), fontSize: 26, color: COLORS.aiInk };
-      return place({ ...base, type: 'math', content, size: view.measure({ type: 'math', content }) });
+      return { ok: true, id: ref(place({ type: 'math', content }, view.measure({ type: 'math', content }))) };
     }
+
+    case 'write_steps': {
+      const steps = arr<{ latex?: unknown; note?: unknown }>(args.steps).filter((s) => str(s?.latex));
+      if (!steps.length) return { ok: false, error: 'steps must contain at least one {latex}' };
+      // Measure everything first, then reserve one block so the steps stay together.
+      const title = str(args.title) ? measureText(str(args.title), 'title') : null;
+      const rows = steps.map((s) => {
+        const math = { latex: str(s.latex), fontSize: 26, color: COLORS.aiInk };
+        const note = str(s.note) ? measureText(str(s.note), 'note') : null;
+        return { math, mathSize: view.measure({ type: 'math', content: math }), note };
+      });
+      const mathW = Math.max(...rows.map((r) => r.mathSize.width));
+      const noteGap = 32, rowGap = 10;
+      const rowH = rows.map((r) => Math.max(r.mathSize.height, r.note?.size.height ?? 0));
+      const width = Math.max(title?.size.width ?? 0, mathW + (rows.some((r) => r.note) ? noteGap + Math.max(...rows.map((r) => r.note?.size.width ?? 0)) : 0));
+      const height = (title ? title.size.height + 8 : 0) + rowH.reduce((a, b) => a + b, 0) + rowGap * (rows.length - 1);
+      const origin = resolvePlacement(board, { width, height }, str(args.placement) || undefined, view.getViewport());
+      let y = origin.y;
+      const ids: string[] = [];
+      let titleId: string | undefined;
+      if (title) {
+        titleId = ref(addAt({ type: 'text', content: title.content }, { x: origin.x, y, ...title.size }));
+        y += title.size.height + 8;
+      }
+      rows.forEach((r, i) => {
+        const h = rowH[i]!;
+        ids.push(ref(addAt({ type: 'math', content: r.math }, { x: origin.x, y: y + (h - r.mathSize.height) / 2, ...r.mathSize })));
+        if (r.note) addAt({ type: 'text', content: r.note.content }, { x: origin.x + mathW + noteGap, y: y + (h - r.note.size.height) / 2, ...r.note.size });
+        y += h + rowGap;
+      });
+      view.ensureVisible({ ...origin, width, height });
+      return { ok: true, title: titleId, steps: ids };
+    }
+
     case 'write_code': {
       const content = { code: str(args.code), language: str(args.language) || 'text' };
-      return place({ ...base, type: 'code', content, size: view.measure({ type: 'code', content }) });
+      return { ok: true, id: ref(place({ type: 'code', content }, view.measure({ type: 'code', content }))) };
     }
+
+    case 'plot':
     case 'plot_function': {
-      const expression = str(args.expression);
-      try {
-        compileExpression(expression);
-      } catch (err) {
-        return { ok: false, error: `Can't plot: ${(err as Error).message}. Use x, + - * / ^ and sin cos tan sqrt abs ln log exp.` };
+      const exprs = [...arr<string>(args.functions), ...(args.expression ? [str(args.expression)] : [])].map(str).filter(Boolean).slice(0, 4);
+      if (!exprs.length) return { ok: false, error: 'functions must list at least one expression' };
+      for (const e of exprs) {
+        try {
+          compileExpression(e);
+        } catch (err) {
+          return { ok: false, error: `Can't plot "${e}": ${(err as Error).message}. Use x, + - * / ^ and sin cos tan sqrt abs ln log exp.` };
+        }
       }
       const x0 = num(args.x_min, -10), x1 = num(args.x_max, 10);
       if (!(x1 > x0)) return { ok: false, error: 'x_max must be greater than x_min' };
-      return place({ ...base, type: 'graph', content: { expression, xRange: [x0, x1], color: COLORS.aiInk }, size: { width: 420, height: 280 } });
+      const points = arr<{ x?: unknown; y?: unknown; label?: unknown }>(args.points)
+        .map((p) => ({ x: num(p?.x, NaN), y: num(p?.y, NaN), label: str(p?.label) || undefined }))
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      const functions = exprs.map((expression, i) => ({ expression, color: COLORS.series[i % COLORS.series.length]! }));
+      const legend = 20 * (functions.length + (args.title ? 1 : 0));
+      const el = place({ type: 'graph', content: { functions, xRange: [x0, x1], points, title: str(args.title) || undefined } }, { width: 460, height: 300 + legend });
+      return { ok: true, id: ref(el) };
     }
+
+    case 'draw_diagram': {
+      const layout = (['flow-right', 'flow-down', 'tree', 'cycle', 'hub'] as const).includes(args.layout as DiagramLayout) ? (args.layout as DiagramLayout) : 'flow-right';
+      const nodes = arr<{ id?: unknown; label?: unknown; shape?: unknown }>(args.nodes)
+        .map((n, i) => ({ key: str(n?.id) || `n${i + 1}`, label: str(n?.label), shape: n?.shape === 'ellipse' ? ('ellipse' as const) : ('rectangle' as const) }))
+        .filter((n) => n.label)
+        .slice(0, 16);
+      if (!nodes.length) return { ok: false, error: 'nodes must contain at least one {id, label}' };
+      const sized = nodes.map((n) => ({ ...n, size: nodeSize(n.label, n.shape) }));
+      const keys = new Set(sized.map((n) => n.key));
+      const edges = arr<{ from?: unknown; to?: unknown; label?: unknown }>(args.edges)
+        .map((e) => ({ from: str(e?.from), to: str(e?.to), label: str(e?.label) || undefined }))
+        .filter((e) => keys.has(e.from) && keys.has(e.to) && e.from !== e.to);
+      const pos = layoutDiagram(sized, edges, layout);
+      const boxes = sized.map((n) => ({ ...pos.get(n.key)!, ...n.size }));
+      const area = union(boxes)!;
+      const title = str(args.title) ? measureText(str(args.title), 'title') : null;
+      const titleH = title ? title.size.height + 16 : 0;
+      const total = { width: Math.max(area.width, title?.size.width ?? 0), height: area.height + titleH };
+      const origin = resolvePlacement(board, total, str(args.placement) || undefined, view.getViewport());
+      let titleId: string | undefined;
+      if (title) titleId = ref(addAt({ type: 'text', content: title.content }, { x: origin.x, y: origin.y, ...title.size }));
+      const placed = new Map<string, BoardElement>();
+      sized.forEach((n, i) => {
+        const b = boxes[i]!;
+        placed.set(n.key, addAt({ type: 'shape', content: { shape: n.shape, color: COLORS.aiInk, label: n.label } }, { x: origin.x + b.x, y: origin.y + titleH + b.y, width: b.width, height: b.height }));
+      });
+      const arrows: string[] = [];
+      for (const e of edges) {
+        const a = placed.get(e.from)!, b = placed.get(e.to)!;
+        arrows.push(ref(addArrow(a.bounds, b.bounds, e.label)));
+      }
+      view.ensureVisible({ ...origin, ...total });
+      return { ok: true, title: titleId, nodes: Object.fromEntries([...placed].map(([k, el]) => [k, ref(el)])), arrows };
+    }
+
+    case 'make_table': {
+      const headers = arr(args.headers).map(str).slice(0, 8);
+      if (!headers.length) return { ok: false, error: 'headers must not be empty' };
+      const rows = arr<unknown[]>(args.rows).slice(0, 20).map((r) => headers.map((_, i) => str(arr(r)[i])));
+      const content = { headers, rows, color: COLORS.aiInk, title: str(args.title) || undefined };
+      return { ok: true, id: ref(place({ type: 'table', content }, view.measure({ type: 'table', content }, 760))) };
+    }
+
+    case 'ask_question': {
+      const question = str(args.question);
+      if (!question) return { ok: false, error: 'question is required' };
+      if (args.kind === 'choice') {
+        const choices = arr(args.choices).map(str).filter(Boolean).slice(0, 5);
+        if (choices.length < 2) return { ok: false, error: 'a choice question needs 2-5 choices' };
+        const content = { question, choices };
+        const size = view.measure({ type: 'choice', content }, 460);
+        return { ok: true, question: ref(place({ type: 'choice', content }, { width: Math.max(320, size.width), height: size.height })) };
+      }
+      // "write": question text (+ optional expression) and an answer box, kept together as one block.
+      const q = measureText(question, 'label');
+      const math = str(args.latex) ? { latex: str(args.latex), fontSize: 26, color: COLORS.aiInk } : null;
+      const mathSize = math ? view.measure({ type: 'math', content: math }) : null;
+      const box = { width: Math.max(440, q.size.width), height: 180 };
+      const height = q.size.height + 8 + (mathSize ? mathSize.height + 8 : 0) + box.height;
+      const origin = resolvePlacement(board, { width: Math.max(box.width, mathSize?.width ?? 0), height }, str(args.placement) || undefined, view.getViewport());
+      const qEl = addAt({ type: 'text', content: q.content }, { ...origin, ...q.size });
+      let y = origin.y + q.size.height + 8;
+      let mathId: string | undefined;
+      if (math && mathSize) {
+        mathId = ref(addAt({ type: 'math', content: math }, { x: origin.x, y, ...mathSize }));
+        y += mathSize.height + 8;
+      }
+      const answer = addAt({ type: 'answer', content: { question: qEl.id } }, { x: origin.x, y, ...box });
+      view.ensureVisible({ x: origin.x, y: origin.y, width: box.width, height });
+      return { ok: true, question: ref(qEl), expression: mathId, answer_box: ref(answer) };
+    }
+
     case 'draw_shape': {
       const shape = args.shape === 'ellipse' ? 'ellipse' : 'rectangle';
-      const size = { width: Math.min(800, Math.max(40, num(args.width, 160))), height: Math.min(600, Math.max(30, num(args.height, 80))) };
-      return place({ ...base, type: 'shape', content: { shape, color: COLORS.aiInk, label: str(args.label) || undefined }, size });
+      const label = str(args.label) || undefined;
+      const auto = label ? nodeSize(label, shape) : { width: 160, height: 80 };
+      const size = { width: Math.min(800, Math.max(40, num(args.width, auto.width))), height: Math.min(600, Math.max(30, num(args.height, auto.height))) };
+      return { ok: true, id: ref(place({ type: 'shape', content: { shape, color: COLORS.aiInk, label } }, size)) };
     }
+
     case 'draw_arrow': {
       const a = board.get(id(args.from_id)), b = board.get(id(args.to_id));
       if (!a || !b) return { ok: false, error: `Unknown item ${!a ? args.from_id : args.to_id}` };
-      const from = edgePoint(a.bounds, center(b.bounds));
-      const to = edgePoint(b.bounds, center(a.bounds));
-      const bounds = { x: Math.min(from.x, to.x) - 8, y: Math.min(from.y, to.y) - 8, width: Math.abs(to.x - from.x) + 16, height: Math.abs(to.y - from.y) + 16 };
-      const el = { ...base, id: board.nextId(), type: 'arrow' as const, bounds, content: { from, to, color: COLORS.aiInk, label: str(args.label) || undefined } };
-      board.add(el, 'ai');
-      return { ok: true, id: `#${el.id}` };
+      return { ok: true, id: ref(addArrow(a.bounds, b.bounds, str(args.label) || undefined)) };
     }
+
     case 'annotate': {
       const target = board.get(id(args.target_id));
       if (!target) return { ok: false, error: `Unknown item ${args.target_id}` };
-      const r = (args.region ?? {}) as Partial<Region>;
+      const r = (args.region ?? {}) as Partial<Record<keyof Region, unknown>>;
       const region = { x0: clamp01(num(r.x0, 0)), x1: clamp01(num(r.x1, 1)), y0: clamp01(num(r.y0, 0)), y1: clamp01(num(r.y1, 1)) };
       const mode = args.mode === 'highlight' || args.mode === 'point' ? args.mode : 'circle';
-      const el = {
-        ...base, id: board.nextId(), type: 'annotation' as const, bounds: target.bounds,
-        content: { target: target.id, mode, region, color: COLORS.annotation, note: str(args.note) || undefined },
-      } satisfies BoardElement;
-      board.add(el, 'ai');
+      const el = addAt({ type: 'annotation', content: { target: target.id, mode, region, color: COLORS.annotation, note: str(args.note) || undefined } }, target.bounds);
       view.ensureVisible(target.bounds);
-      return { ok: true, id: `#${el.id}` };
+      return { ok: true, id: ref(el) };
     }
+
     case 'erase': {
       const el = board.get(id(args.id));
       if (!el) return { ok: false, error: `Unknown item ${args.id}` };
@@ -170,12 +383,33 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       for (const a of board.all()) if (a.type === 'annotation' && a.content.target === el.id) board.remove(a.id, 'ai');
       return { ok: true };
     }
+
     default:
       return { ok: false, error: `Unknown tool ${name}` };
+  }
+
+  function addArrow(from: Bounds, to: Bounds, label?: string): BoardElement {
+    const a = edgePoint(from, center(to));
+    const b = edgePoint(to, center(from));
+    const bounds = { x: Math.min(a.x, b.x) - 8, y: Math.min(a.y, b.y) - 8, width: Math.abs(b.x - a.x) + 16, height: Math.abs(b.y - a.y) + 16 };
+    return addAt({ type: 'arrow', content: { from: a, to: b, color: COLORS.aiInk, label } }, bounds);
   }
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+/** Box size that fits a wrapped label (canvas text, same font as the shape renderer). */
+function nodeSize(label: string, shape: 'rectangle' | 'ellipse'): { width: number; height: number } {
+  measureCtx ??= document.createElement('canvas').getContext('2d')!;
+  measureCtx.font = `${SHAPE_FONT}px system-ui, sans-serif`;
+  const natural = measureCtx.measureText(label).width;
+  const width = Math.round(Math.min(220, Math.max(110, natural + 32)) * (shape === 'ellipse' ? 1.3 : 1));
+  const inner = shape === 'ellipse' ? width * 0.64 : width - 24;
+  const lines = wrapLines(measureCtx, label, inner).length;
+  return { width, height: Math.max(shape === 'ellipse' ? 64 : 52, lines * SHAPE_FONT * 1.25 + (shape === 'ellipse' ? 36 : 24)) };
+}
 
 /** Where the line from the box's center toward `toward` leaves the box. */
 function edgePoint(b: Bounds, toward: Point): Point {

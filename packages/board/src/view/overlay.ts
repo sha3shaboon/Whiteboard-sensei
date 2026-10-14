@@ -2,19 +2,39 @@
 // transformed container so it pans and zooms with the canvas.
 
 import katex from 'katex';
-import type { BoardElement, CodeElement, MathElement, TextElement } from '../elements';
+import type { BoardElement, ChoiceElement, CodeElement, MathElement, TableElement, TextElement } from '../elements';
 
-export type DomElement = TextElement | MathElement | CodeElement;
+export type DomElement = TextElement | MathElement | CodeElement | TableElement | ChoiceElement;
 export type DomContent =
   | { type: 'text'; content: TextElement['content'] }
   | { type: 'math'; content: MathElement['content'] }
-  | { type: 'code'; content: CodeElement['content'] };
+  | { type: 'code'; content: CodeElement['content'] }
+  | { type: 'table'; content: TableElement['content'] }
+  | { type: 'choice'; content: ChoiceElement['content'] };
+
+/** Inline math inside table cells / choices: text between $...$ is rendered with KaTeX. */
+function richText(text: string): string {
+  return text
+    .split(/(\$[^$]+\$)/g)
+    .map((part) =>
+      part.startsWith('$') && part.endsWith('$') && part.length > 2
+        ? katex.renderToString(part.slice(1, -1), { throwOnError: false, output: 'html' })
+        : escapeHtml(part),
+    )
+    .join('');
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+const letter = (i: number) => String.fromCharCode(65 + i);
 
 /** Max width before AI text and code wrap. */
 export const MAX_BLOCK_WIDTH = 560;
 
 export function isDomElement(el: BoardElement): el is DomElement {
-  return el.type === 'text' || el.type === 'math' || el.type === 'code';
+  return el.type === 'text' || el.type === 'math' || el.type === 'code' || el.type === 'table' || el.type === 'choice';
 }
 
 /** Fills `node` with the rendered content; returns nothing, styles are inline so measuring works off-board. */
@@ -44,6 +64,38 @@ export function renderDomContent(node: HTMLElement, el: DomContent): void {
       Object.assign(pre.style, { margin: '0', font: '14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap' });
       node.replaceChildren(pre);
       Object.assign(node.style, { background: '#f4f4f1', border: '1px solid #e2e2de', borderRadius: '6px', padding: '8px 12px', color: '#1c1c1a' });
+      break;
+    }
+    case 'table': {
+      const c = el.content;
+      const cell = 'border:1px solid #d9dfee;padding:6px 12px;text-align:left;vertical-align:top;';
+      node.innerHTML =
+        (c.title ? `<div style="font-weight:600;margin:0 0 6px;color:${c.color}">${richText(c.title)}</div>` : '') +
+        `<table style="border-collapse:collapse;font:15px/1.4 system-ui,sans-serif;color:#1c1c1a;background:#fff">` +
+        `<thead><tr>${c.headers.map((h) => `<th style="${cell}background:#eef3fd;color:${c.color};font-weight:600">${richText(h)}</th>`).join('')}</tr></thead>` +
+        `<tbody>${c.rows.map((r) => `<tr>${c.headers.map((_, i) => `<td style="${cell}">${richText(r[i] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+      Object.assign(node.style, { padding: '2px' });
+      break;
+    }
+    case 'choice': {
+      const c = el.content;
+      node.innerHTML =
+        `<div style="font-weight:600;margin-bottom:10px;line-height:1.35">${richText(c.question)}</div>` +
+        c.choices
+          .map((choice, i) => {
+            const on = c.selected === i;
+            return `<button type="button" data-choice="${i}" style="display:flex;gap:10px;align-items:center;width:100%;text-align:left;margin:6px 0 0;padding:8px 12px;border-radius:8px;cursor:pointer;font:15px/1.35 system-ui,sans-serif;border:1.5px solid ${on ? '#2563eb' : '#d9dfee'};background:${on ? '#e8efff' : '#fff'};color:#1c1c1a"><b style="color:#2563eb">${letter(i)}</b><span>${richText(choice)}</span></button>`;
+          })
+          .join('');
+      Object.assign(node.style, {
+        font: '16px system-ui, sans-serif',
+        color: '#1c1c1a',
+        background: '#fbfcff',
+        border: '1.5px solid #2563eb',
+        borderRadius: '12px',
+        padding: '14px 16px',
+        boxShadow: '0 2px 10px rgba(37,99,235,0.08)',
+      });
       break;
     }
   }

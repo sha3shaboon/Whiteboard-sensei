@@ -1,4 +1,4 @@
-// Scripted mini-lesson that drives the same tool executor the AI uses. Lets anyone see the board
+// Scripted mini-lessons that drive the same tool executor the AI uses. Lets anyone see the board
 // side working without an API key (open the app with ?demo).
 
 export interface DemoStep {
@@ -8,14 +8,53 @@ export interface DemoStep {
 }
 
 export const DEMO: DemoStep[] = [
-  { say: "Let's solve a linear equation together.", tool: 'write_text', args: { text: 'Solving a linear equation', placement: 'new section' } },
-  { say: 'Here is the equation.', tool: 'write_math', args: { latex: '2x + 4 = 10' } },
-  { say: 'First, subtract 4 from both sides.', tool: 'write_math', args: { latex: '2x = 10 - 4 = 6' } },
-  { say: 'Then divide both sides by 2.', tool: 'write_math', args: { latex: 'x = \\frac{6}{2} = 3' } },
-  { say: 'This is the step where we isolate x.', tool: 'annotate', args: { target_id: '#4', mode: 'circle', region: { x0: 0, x1: 0.3, y0: 0, y1: 1 }, note: 'x is alone' } },
-  { say: 'We can also see it on a graph: the line y = 2x + 4 reaches 10 at x = 3.', tool: 'plot_function', args: { expression: '2x + 4', x_min: -1, x_max: 5, placement: 'right of #2' } },
-  { say: 'And a quick diagram of the steps.', tool: 'draw_shape', args: { shape: 'rectangle', label: '2x + 4 = 10', width: 150, height: 56, placement: 'new section' } },
-  { say: '', tool: 'draw_shape', args: { shape: 'rectangle', label: 'x = 3', width: 120, height: 56, placement: 'right of #7' } },
-  { say: 'Subtract, then divide.', tool: 'draw_arrow', args: { from_id: '#7', to_id: '#8', label: '−4, ÷2' } },
-  { say: 'Your turn: try 3x − 5 = 7 on the board, then press "Check my work".', tool: 'write_math', args: { latex: '3x - 5 = 7', placement: 'new section' } },
+  { say: "Let's solve a linear equation together.", tool: 'write_text', args: { text: 'Linear equations', style: 'title', placement: 'new section' } },
+  {
+    say: 'Here are the steps. We undo each operation on x, doing the same thing to both sides.',
+    tool: 'write_steps',
+    args: {
+      steps: [
+        { latex: '2x + 4 = 10', note: 'the equation' },
+        { latex: '2x = 6', note: 'subtract 4 from both sides' },
+        { latex: 'x = 3', note: 'divide both sides by 2' },
+      ],
+    },
+  },
+  { say: 'This is the key move: x is now alone.', tool: 'annotate', args: { target_id: '#6', mode: 'circle', note: 'x is isolated' } },
+  {
+    say: 'On a graph, the solution is where the line y = 2x + 4 meets the level y = 10.',
+    tool: 'plot',
+    args: { functions: ['2x + 4', '10'], x_min: -1, x_max: 5, points: [{ x: 3, y: 10, label: 'x = 3' }], placement: 'right of #3' },
+  },
+  {
+    say: 'Every linear equation follows the same plan.',
+    tool: 'draw_diagram',
+    args: {
+      layout: 'flow-right',
+      title: 'The plan',
+      nodes: [
+        { id: 'a', label: 'Simplify both sides' },
+        { id: 'b', label: 'Move x terms to one side' },
+        { id: 'c', label: 'Undo + and −' },
+        { id: 'd', label: 'Undo × and ÷' },
+      ],
+      edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }, { from: 'c', to: 'd' }],
+      placement: 'new section',
+    },
+  },
+  {
+    say: 'Each operation has an opposite that undoes it.',
+    tool: 'make_table',
+    args: { title: 'Inverse operations', headers: ['Operation', 'Undo it with'], rows: [['add $a$', 'subtract $a$'], ['subtract $a$', 'add $a$'], ['multiply by $a$', 'divide by $a$'], ['divide by $a$', 'multiply by $a$']], placement: 'right of #14' },
+  },
+  {
+    say: 'Quick check: what do we do first here?',
+    tool: 'ask_question',
+    args: { kind: 'choice', question: 'To solve $3x - 5 = 7$, the first step is…', choices: ['Divide both sides by 3', 'Add 5 to both sides', 'Subtract 7 from both sides'], placement: 'new section' },
+  },
+  {
+    say: 'Now your turn: solve this one in the box, then press Done.',
+    tool: 'ask_question',
+    args: { kind: 'write', question: 'Solve for x:', latex: '3x - 5 = 7', placement: 'right of #19' },
+  },
 ];

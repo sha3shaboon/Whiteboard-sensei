@@ -27,6 +27,8 @@ export interface RealtimeHandlers {
   onToolCall(name: string, args: Record<string, unknown>): Promise<unknown> | unknown;
   onUsage(usage: Usage): void;
   onSpeaking?(speaking: boolean): void;
+  /** After each AI response: whether it called any tools. */
+  onResponseDone?(usedTools: boolean): void;
 }
 
 type ServerEvent = { type: string; [key: string]: any };
@@ -243,6 +245,7 @@ export class RealtimeClient {
         this.usage.textOut += u.output_token_details?.text_tokens ?? 0;
         this.h.onUsage({ ...this.usage });
       }
+      this.h.onResponseDone?.(this.pendingToolOutputs || (r.output ?? []).some((i: { type?: string }) => i.type === 'function_call'));
       // After tool results, let the model continue (one follow-up per response).
       if (this.pendingToolOutputs) {
         this.pendingToolOutputs = false;

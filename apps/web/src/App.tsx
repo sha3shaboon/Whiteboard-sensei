@@ -12,6 +12,9 @@ import { executeTool, TOOLS } from './tutor/tools';
 
 const demoAvailable = new URLSearchParams(location.search).has('demo');
 
+const BOARD_NUDGE =
+  '[Coach] Your last replies used only voice. In your next reply, put the content on the board (write_steps, draw_diagram, make_table, plot, annotate) and give the student something to do there with ask_question.';
+
 export function App() {
   const board = useMemo(() => new Board(), []);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -58,6 +61,19 @@ export function App() {
   }, []);
   const eventLine = useCallback((text: string) => upsert({ id: `ev-${crypto.randomUUID()}`, role: 'event', text, final: true }), [upsert]);
 
+  // Board-first coaching: after 2 replies in a row without any board tool (greeting excluded),
+  // remind the model silently to teach on the board.
+  const nudge = useRef<(usedTools: boolean) => void>(() => {});
+  const plainReplies = useRef(-1);
+  nudge.current = (usedTools) => {
+    if (usedTools) plainReplies.current = 0;
+    else if (++plainReplies.current >= 2) {
+      plainReplies.current = 0;
+      client.addContext(BOARD_NUDGE);
+      eventLine(`Coach → AI: ${BOARD_NUDGE}`);
+    }
+  };
+
   const client = useMemo(
     () =>
       new RealtimeClient({
@@ -76,6 +92,7 @@ export function App() {
         },
         onUsage: setUsage,
         onSpeaking: setSpeaking,
+        onResponseDone: (usedTools) => nudge.current(usedTools),
       }),
     [board, upsert, eventLine],
   );
@@ -125,6 +142,7 @@ export function App() {
       instructions: INSTRUCTIONS,
       tools: TOOLS,
       onOpen: () => {
+        plainReplies.current = -1; // the greeting doesn't count
         setMicOn(true);
         bridgeRef.current?.sendSummary();
         client.respond(); // tutor greets first and asks what to learn

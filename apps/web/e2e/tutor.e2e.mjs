@@ -6,7 +6,7 @@ const S = 'e2e-results';
 mkdirSync(S, { recursive: true });
 const BASE = process.env.BASE_URL ?? 'http://localhost:5173';
 const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
-const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+const p = await b.newPage({ viewport: { width: 1600, height: 900 } });
 const errors = [];
 p.on('pageerror', (e) => errors.push(e.message));
 
@@ -31,6 +31,8 @@ await p.addInitScript(() => {
         this.server({ type: 'response.output_audio_transcript.delta', item_id: item, delta: 'to learn today?' });
         this.server({ type: 'response.output_audio_transcript.done', item_id: item, transcript: 'Hi! What would you like to learn today? Let me write an example.' });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call1', name: 'write_math', arguments: JSON.stringify({ latex: '3x + 2 = 14' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call2', name: 'ask_question', arguments: JSON.stringify({ kind: 'write', question: 'Solve for x', placement: 'right of #1' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call3', name: 'ask_question', arguments: JSON.stringify({ kind: 'choice', question: 'What is 2 + 2?', choices: ['3', '4', '5'], placement: 'right of #3' }) });
         this.server({ type: 'response.done', response: { id: rid, output: [{ type: 'function_call', call_id: 'call1', name: 'write_math', arguments: '{}' }], usage: { input_token_details: { audio_tokens: 100, text_tokens: 50 }, output_token_details: { audio_tokens: 300, text_tokens: 20 } } } });
       } else {
         this.server({ type: 'response.output_audio_transcript.done', item_id: item, transcript: 'Reply ' + n });
@@ -68,6 +70,18 @@ await stroke([[150, 210], [175, 210]]); await stroke([[150, 220], [175, 220]]);
 await stroke([[190, 198], [190, 232]]); await stroke([[200, 200], [215, 198], [218, 210], [200, 232], [222, 232]]);
 await p.waitForTimeout(2200); // pen idle -> grouped event -> recognition -> context
 
+// Answer the "write" question: write inside the answer box, then press Done.
+const done = await p.locator('[data-done]').boundingBox();
+const ax = done.x - 200, ay = done.y - 70;
+await stroke([[ax, ay], [ax + 10, ay - 12], [ax + 14, ay + 10], [ax + 2, ay + 24]]);
+await stroke([[ax + 30, ay + 6], [ax + 50, ay + 6]]); await stroke([[ax + 30, ay + 14], [ax + 50, ay + 14]]);
+await stroke([[ax + 64, ay - 10], [ax + 78, ay - 10], [ax + 70, ay + 4], [ax + 80, ay + 16], [ax + 64, ay + 24]]);
+await p.locator('[data-done]').click();
+await p.waitForTimeout(800);
+// Answer the multiple-choice question.
+await p.getByRole('button', { name: /^B\s*4$/ }).click();
+await p.waitForTimeout(500);
+
 await p.getByPlaceholder('Type a message…').fill('Is that right?');
 await p.keyboard.press('Enter');
 await p.waitForTimeout(300);
@@ -79,12 +93,17 @@ const sent = await p.evaluate(() => window.__sent);
 const texts = sent.filter((e) => e.type === 'conversation.item.create').map((e) => e.item.type === 'message' ? e.item.content.map((c) => c.text ?? '[image]').join(' ') : 'TOOL_OUTPUT ' + e.item.output);
 let failed = 0;
 const check = (name, ok) => { if (!ok) failed++; console.log((ok ? 'PASS ' : 'FAIL ') + name); };
-check('session.update sends tools + instructions', sent[0]?.type === 'session.update' && sent[0].session.tools.length === 8 && sent[0].session.instructions.includes('tutor'));
+check('session.update sends tools + instructions', sent[0]?.type === 'session.update' && sent[0].session.tools.length >= 12 && sent[0].session.instructions.includes('tutor'));
 check('initial board summary sent on connect', texts[0]?.startsWith('[Board] Current board state.'));
 check('tutor greets first (response.create after connect)', sent[2]?.type === 'response.create');
 check('tool output returned for write_math', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('"ok":true')));
 check('one follow-up response.create after tool output', sent.filter((e) => e.type === 'response.create').length >= 2);
-check('handwriting event with recognized text', texts.some((t) => t.includes('[Board] Student wrote by hand') && t.includes('"3x = 12"') && t.includes('near #1')));
+check('handwriting event with recognized text', texts.some((t) => t.includes('[Board] Student wrote by hand') && t.includes('"3x = 12"') && t.includes('near #')));
+check('session.update includes the new board tools', ['write_steps', 'draw_diagram', 'make_table', 'plot', 'ask_question'].every((n) => sent[0].session.tools.some((t) => t.name === n)));
+check('answer box submitted with handwriting, AI asked to respond', (() => { const i = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text?.startsWith('[Answer] The student submitted their answer')); return i > 0 && sent[i].item.content[0].text.includes('handwriting') && sent[i + 1]?.type === 'response.create'; })());
+check('choice pick sent, AI asked to respond', (() => { const i = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text?.includes('the student picked B) 4')); return i > 0 && sent[i + 1]?.type === 'response.create'; })());
+check('handwriting inside the box is reported as such', texts.some((t) => t.includes('inside answer box #3')));
+check('board nudge after two voice-only replies', texts.some((t) => t.startsWith('[Coach]')));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

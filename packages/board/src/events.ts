@@ -84,7 +84,8 @@ export class StudentEventGrouper {
     let best: BoardElement | undefined;
     let bestD = 250;
     for (const el of this.board.all()) {
-      if (exclude.has(el.id) || el.type === 'annotation' || (el.type === 'stroke' && !el.content.recognized)) continue;
+      // Answer boxes are reported separately ("inside answer box #3"), so they're not useful as a neighbor.
+      if (exclude.has(el.id) || el.type === 'annotation' || el.type === 'answer' || (el.type === 'stroke' && !el.content.recognized)) continue;
       const d = boundsDistance(bounds, el.bounds);
       if (d < bestD) {
         bestD = d;

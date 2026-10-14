@@ -4,6 +4,7 @@ import { union } from './geometry';
 
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const r = (n: number) => Math.round(n);
+export const letter = (i: number) => String.fromCharCode(65 + i);
 
 /** What an element says, in a few words, for the AI. */
 export function describeContent(el: BoardElement): string {
@@ -19,7 +20,15 @@ export function describeContent(el: BoardElement): string {
     case 'arrow':
       return `arrow${el.content.label ? ` "${clip(el.content.label)}"` : ''}`;
     case 'graph':
-      return `graph of y = ${el.content.expression}`;
+      return `graph of ${el.content.functions.map((f) => `y = ${f.expression}`).join(', ')}${el.content.points?.length ? ` with points ${el.content.points.map((p) => p.label ?? `(${p.x},${p.y})`).join(', ')}` : ''}`;
+    case 'table':
+      return `table${el.content.title ? ` "${clip(el.content.title, 40)}"` : ''} [${el.content.headers.join(' | ')}] with ${el.content.rows.length} rows`;
+    case 'choice': {
+      const picked = el.content.selected;
+      return `multiple choice "${clip(el.content.question, 60)}" options [${el.content.choices.map((c, i) => `${letter(i)}) ${clip(c, 30)}`).join('; ')}]${picked === undefined ? ', not answered yet' : `, student picked ${letter(picked)}`}`;
+    }
+    case 'answer':
+      return `answer box${el.content.question ? ` for #${el.content.question}` : ''}${el.content.submissions ? ' (submitted)' : ' (open)'}`;
     case 'code':
       return `${el.content.language} code "${clip(el.content.code.replace(/\s+/g, ' '))}"`;
     case 'annotation':

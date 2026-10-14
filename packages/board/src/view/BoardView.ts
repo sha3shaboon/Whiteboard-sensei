@@ -38,6 +38,8 @@ export class BoardView {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private world: HTMLDivElement;
+  /** Above the canvas: clickable items (choice cards, answer-box Done buttons). */
+  private topWorld: HTMLDivElement;
   private measurer: Measurer;
   private domNodes = new Map<ElementId, HTMLDivElement>();
   private camera: Camera = { x: 0, y: 0, zoom: 1 };
@@ -66,7 +68,14 @@ export class BoardView {
     Object.assign(this.canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
     this.ctx = this.canvas.getContext('2d')!;
 
-    this.root.append(overlay, this.canvas);
+    const top = document.createElement('div');
+    Object.assign(top.style, { position: 'absolute', inset: '0', overflow: 'hidden', pointerEvents: 'none' });
+    this.topWorld = document.createElement('div');
+    Object.assign(this.topWorld.style, { position: 'absolute', left: '0', top: '0', transformOrigin: '0 0' });
+    top.appendChild(this.topWorld);
+    this.topWorld.addEventListener('click', (e) => this.onInteract(e));
+
+    this.root.append(overlay, this.canvas, top);
     container.appendChild(this.root);
     this.measurer = new Measurer(this.root);
 
@@ -161,16 +170,41 @@ export class BoardView {
   }
 
   private syncDom(el: BoardElement): void {
-    if (!isDomElement(el)) return;
+    if (!isDomElement(el) && el.type !== 'answer') return;
+    const interactive = el.type === 'choice' || el.type === 'answer';
     let node = this.domNodes.get(el.id);
     if (!node) {
       node = document.createElement('div');
       node.dataset.id = el.id;
-      this.world.appendChild(node);
+      if (interactive) node.dataset.interactive = '';
+      (interactive ? this.topWorld : this.world).appendChild(node);
       this.domNodes.set(el.id, node);
+    }
+    if (el.type === 'answer') {
+      // Only the Done button lives in the DOM; the dashed box is drawn on the canvas under the student's ink.
+      const done = !!el.content.submissions;
+      // Zero-size anchor at the box's bottom-right corner; the button hangs inside the box from it.
+      node.innerHTML = `<button type="button" data-done style="position:absolute;right:8px;bottom:8px;white-space:nowrap;font:600 13px system-ui,sans-serif;padding:6px 12px;border-radius:999px;cursor:pointer;border:0;background:${done ? '#16a34a' : '#2563eb'};color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15)">${done ? 'Submit again' : 'Done ✓'}</button>`;
+      Object.assign(node.style, { position: 'absolute', left: `${el.bounds.x + el.bounds.width}px`, top: `${el.bounds.y + el.bounds.height}px`, width: '0', height: '0', pointerEvents: 'auto' });
+      return;
     }
     renderDomContent(node, el);
     Object.assign(node.style, { left: `${el.bounds.x}px`, top: `${el.bounds.y}px`, width: `${el.bounds.width}px`, minHeight: `${el.bounds.height}px`, transform: '' });
+    if (interactive) node.style.pointerEvents = 'auto';
+  }
+
+  /** Student clicks on interactive items become ordinary student changes (so the AI hears about them). */
+  private onInteract(e: MouseEvent): void {
+    const target = e.target as HTMLElement;
+    const id = target.closest<HTMLElement>('[data-id]')?.dataset.id;
+    const el = id ? this.board.get(id) : undefined;
+    if (!el) return;
+    const choiceBtn = target.closest<HTMLElement>('[data-choice]');
+    if (el.type === 'choice' && choiceBtn) {
+      this.board.update(el.id, { content: { ...el.content, selected: Number(choiceBtn.dataset.choice) } });
+    } else if (el.type === 'answer' && target.closest('[data-done]')) {
+      this.board.update(el.id, { content: { ...el.content, submissions: (el.content.submissions ?? 0) + 1 } });
+    }
   }
 
   // ---------- rendering ----------
@@ -195,6 +229,7 @@ export class BoardView {
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, -camera.x * camera.zoom * dpr, -camera.y * camera.zoom * dpr);
     this.world.style.transform = `translate(${-camera.x * camera.zoom}px, ${-camera.y * camera.zoom}px) scale(${camera.zoom})`;
+    this.topWorld.style.transform = this.world.style.transform;
     this.updateGrid();
 
     const g = this.gesture;
@@ -283,6 +318,7 @@ export class BoardView {
 
   private onDown(e: PointerEvent): void {
     if (e.target instanceof HTMLTextAreaElement) return;
+    if ((e.target as HTMLElement).closest?.('[data-interactive]')) return; // clicks on choice cards / Done buttons
     if (e.pointerType === 'pen') this.lastPenAt = performance.now();
     if (e.pointerType === 'touch') {
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
