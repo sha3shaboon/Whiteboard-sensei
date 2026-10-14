@@ -5,6 +5,8 @@ export interface RealtimeConfig {
   apiKey: string;
   model: string;
   voice: string;
+  /** Model that transcribes the student's speech for the chat panel. Dropped if the API rejects it. */
+  transcribeModel?: string;
 }
 
 export interface ClientSecret {
@@ -17,21 +19,35 @@ export async function createClientSecret(
   safetyIdentifier: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<ClientSecret> {
-  const res = await fetchImpl('https://api.openai.com/v1/realtime/client_secrets', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
-      'OpenAI-Safety-Identifier': safetyIdentifier,
-    },
-    body: JSON.stringify({
-      session: {
-        type: 'realtime',
-        model: config.model,
-        audio: { output: { voice: config.voice } },
+  const request = (withTranscription: boolean) =>
+    fetchImpl('https://api.openai.com/v1/realtime/client_secrets', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Safety-Identifier': safetyIdentifier,
       },
-    }),
-  });
+      body: JSON.stringify({
+        session: {
+          type: 'realtime',
+          model: config.model,
+          audio: {
+            input: {
+              turn_detection: { type: 'semantic_vad' },
+              ...(withTranscription && config.transcribeModel ? { transcription: { model: config.transcribeModel } } : {}),
+            },
+            output: { voice: config.voice },
+          },
+        },
+      }),
+    });
+
+  let res = await request(true);
+  if (res.status === 400 && config.transcribeModel) {
+    // Unknown transcription model shouldn't take the whole tutor down: retry without it.
+    console.warn(`client_secrets rejected transcription config, retrying without: ${await res.text()}`);
+    res = await request(false);
+  }
   if (!res.ok) {
     throw new Error(`client_secrets failed: ${res.status} ${await res.text()}`);
   }

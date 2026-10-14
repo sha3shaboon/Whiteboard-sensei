@@ -14,14 +14,46 @@ An AI tutor that teaches by voice, chat and a shared whiteboard. Spec and build 
 | `spikes/realtime` | Stage 0: voice latency, tool calls and typed input in one Realtime session |
 | `spikes/handwriting` | Stage 0: handwriting → LaTeX benchmark across vision models |
 
-## Setup
+## Run it
 
 ```bash
 pnpm install
-cp .env.example .env   # add OPENAI_API_KEY (and ANTHROPIC_API_KEY for the handwriting benchmark)
-pnpm dev               # web on :5173, server on :8787
-pnpm test && pnpm typecheck && pnpm build
+cp .env.example .env   # OPENAI_API_KEY (voice + chat). ANTHROPIC_API_KEY is optional (handwriting recognition)
+pnpm dev               # open http://localhost:5173 (server runs on :8787)
 ```
+
+Press **Start session**, allow the microphone, and the tutor greets you and asks what you want to learn.
+Talk or type; write on the board with pen, text or shapes; press **Check my work** for feedback.
+Tick **Show board events** to see exactly what the AI is told about the board and what it draws.
+
+- No API key? Open `http://localhost:5173/?demo` and press **Run board demo** to see the AI-side
+  board tools drive a scripted mini-lesson.
+- Without `ANTHROPIC_API_KEY`, handwriting is sent to the voice model as a small image instead of
+  being transcribed first. With it, `claude-haiku-5-5` transcribes it (`RECOGNIZE_MODEL` to change).
+- Tablet: run `pnpm dev`, then open the network URL Vite prints. The microphone needs HTTPS off
+  localhost, so use an HTTPS tunnel (or type to the tutor) when testing on an iPad.
+
+## Checks
+
+```bash
+pnpm test && pnpm typecheck && pnpm build
+pnpm --filter @ai-tutor/web e2e   # with pnpm dev running: full session against a fake Realtime peer
+```
+
+## What works (trial build)
+
+- Voice conversation (interruptible) and typed chat in one session; transcript in the chat panel
+- The tutor opens by asking subject, level and goal, then explains or solves step by step
+- Whiteboard: pressure pen, highlighter, eraser, text, rectangle/ellipse/line/arrow, select and move,
+  delete, undo/redo, pan (drag with pan tool, Alt+drag, two fingers) and zoom (Ctrl+wheel, pinch)
+- AI writes on the board while speaking: text, LaTeX math, code, graphs, labeled shapes, arrows,
+  and can circle/highlight/point at any item including the student's handwriting
+- Relative placement ("below #12") with automatic layout; AI content never covers student work
+- The AI sees board activity as silent events (grouped handwriting after a 1.5 s pause, typed text,
+  shapes, moves, erases, edits) and responds when the student talks, types or presses Check my work
+- Approximate audio cost per session in the chat footer
+
+Not yet: accounts, saved sessions/profiles (Stage 5), shape resizing, multi-select.
 
 ## Stage 0 checklist
 

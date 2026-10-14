@@ -1,0 +1,198 @@
+// Thin adapter over the OpenAI Realtime API (WebRTC). The rest of the app talks to this class only,
+// so the provider can be swapped later. Voice, typed chat and board context share one session.
+
+export type Status = 'idle' | 'connecting' | 'connected' | 'error';
+
+export interface ToolDefinition {
+  type: 'function';
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface Usage {
+  audioIn: number;
+  audioOut: number;
+  textIn: number;
+  textOut: number;
+  cachedIn: number;
+}
+
+export interface RealtimeHandlers {
+  onStatus(status: Status, detail?: string): void;
+  /** A transcript line: created empty, then filled by deltas, then marked final. */
+  onTranscript(id: string, role: 'user' | 'assistant', text: string, final: boolean): void;
+  onToolCall(name: string, args: Record<string, unknown>): Promise<unknown> | unknown;
+  onUsage(usage: Usage): void;
+  onSpeaking?(speaking: boolean): void;
+}
+
+type ServerEvent = { type: string; [key: string]: any };
+
+export class RealtimeClient {
+  private pc: RTCPeerConnection | null = null;
+  private dc: RTCDataChannel | null = null;
+  private mic: MediaStream | null = null;
+  private audio: HTMLAudioElement | null = null;
+  private transcripts = new Map<string, string>();
+  private handledCalls = new Set<string>();
+  private pendingToolOutputs = false;
+  private usage: Usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0, cachedIn: 0 };
+  private localId = 0;
+
+  constructor(private h: RealtimeHandlers) {}
+
+  get connected(): boolean {
+    return this.dc?.readyState === 'open';
+  }
+
+  async connect(opts: { instructions: string; tools: ToolDefinition[]; onOpen?: () => void }): Promise<void> {
+    this.h.onStatus('connecting');
+    try {
+      const tokenRes = await fetch('/api/realtime/session', { method: 'POST' });
+      if (!tokenRes.ok) throw new Error((await tokenRes.json().catch(() => null))?.error ?? `Server error ${tokenRes.status}`);
+      const { value: key } = (await tokenRes.json()) as { value: string };
+
+      const pc = (this.pc = new RTCPeerConnection());
+      this.audio = new Audio();
+      this.audio.autoplay = true;
+      pc.ontrack = (e) => {
+        if (this.audio) this.audio.srcObject = e.streams[0] ?? null;
+      };
+
+      try {
+        this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        pc.addTrack(this.mic.getAudioTracks()[0]!, this.mic);
+      } catch {
+        // No mic (denied or unavailable): still receive the AI's voice; the student types.
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+      }
+
+      const dc = (this.dc = pc.createDataChannel('oai-events'));
+      dc.addEventListener('message', (e) => this.handle(JSON.parse(e.data)));
+      dc.addEventListener('open', () => {
+        this.send({ type: 'session.update', session: { type: 'realtime', instructions: opts.instructions, tools: opts.tools, tool_choice: 'auto' } });
+        this.h.onStatus('connected', this.mic ? undefined : 'Microphone unavailable: type to talk');
+        opts.onOpen?.();
+      });
+      dc.addEventListener('close', () => this.h.onStatus('idle'));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST',
+        body: offer.sdp,
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/sdp' },
+      });
+      if (!sdpRes.ok) throw new Error(`Realtime connect failed (${sdpRes.status})`);
+      await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
+    } catch (err) {
+      this.disconnect();
+      this.h.onStatus('error', (err as Error).message);
+    }
+  }
+
+  disconnect(): void {
+    this.dc?.close();
+    this.pc?.close();
+    this.mic?.getTracks().forEach((t) => t.stop());
+    if (this.audio) this.audio.srcObject = null;
+    this.dc = this.pc = this.mic = this.audio = null;
+    this.h.onStatus('idle');
+  }
+
+  get hasMic(): boolean {
+    return !!this.mic;
+  }
+
+  setMicEnabled(enabled: boolean): void {
+    this.mic?.getAudioTracks().forEach((t) => (t.enabled = enabled));
+  }
+
+  /** A typed student message; the AI answers it. */
+  sendText(text: string): void {
+    const id = `local-${++this.localId}`;
+    this.h.onTranscript(id, 'user', text, true);
+    this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+    this.send({ type: 'response.create' });
+  }
+
+  /** Adds context (board events) without making the AI speak. Optionally with a small image. */
+  addContext(text: string, imagePngBase64?: string): void {
+    const content: unknown[] = [{ type: 'input_text', text }];
+    if (imagePngBase64) content.push({ type: 'input_image', image_url: `data:image/png;base64,${imagePngBase64}` });
+    this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content } });
+  }
+
+  /** Asks the AI to respond now (e.g. after "Check my work"). */
+  respond(): void {
+    this.send({ type: 'response.create' });
+  }
+
+  private send(event: object): void {
+    if (this.dc?.readyState === 'open') this.dc.send(JSON.stringify(event));
+  }
+
+  private transcript(id: string, role: 'user' | 'assistant', delta: string | null, full: string | null, final: boolean) {
+    const text = full ?? (this.transcripts.get(id) ?? '') + (delta ?? '');
+    this.transcripts.set(id, text);
+    this.h.onTranscript(id, role, text, final);
+  }
+
+  private async runToolCall(callId: string, name: string, rawArgs: string) {
+    if (this.handledCalls.has(callId)) return;
+    this.handledCalls.add(callId);
+    let output: unknown;
+    try {
+      output = await this.h.onToolCall(name, JSON.parse(rawArgs || '{}'));
+    } catch (err) {
+      output = { ok: false, error: (err as Error).message };
+    }
+    this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
+    this.pendingToolOutputs = true;
+  }
+
+  private async handle(ev: ServerEvent): Promise<void> {
+    const t = ev.type;
+    if (t === 'input_audio_buffer.committed' && ev.item_id) {
+      // Placeholder so the student's spoken line appears in order, before the AI's reply.
+      this.transcript(ev.item_id, 'user', null, '…', false);
+    } else if (t.includes('input_audio_transcription')) {
+      if (t.endsWith('.delta')) {
+        const prev = this.transcripts.get(ev.item_id);
+        this.transcript(ev.item_id, 'user', null, (prev === '…' ? '' : (prev ?? '')) + (ev.delta ?? ''), false);
+      } else if (t.endsWith('.completed')) this.transcript(ev.item_id, 'user', null, ev.transcript?.trim() || '(voice message)', true);
+      else if (t.endsWith('.failed')) this.transcript(ev.item_id, 'user', null, '(voice message)', true);
+    } else if (t === 'response.output_audio_transcript.delta' || t === 'response.output_text.delta') {
+      this.transcript(ev.item_id, 'assistant', ev.delta, null, false);
+    } else if (t === 'response.output_audio_transcript.done' || t === 'response.output_text.done') {
+      this.transcript(ev.item_id, 'assistant', null, ev.transcript ?? ev.text ?? this.transcripts.get(ev.item_id) ?? '', true);
+    } else if (t === 'response.function_call_arguments.done') {
+      await this.runToolCall(ev.call_id, ev.name, ev.arguments);
+    } else if (t === 'output_audio_buffer.started') {
+      this.h.onSpeaking?.(true);
+    } else if (t === 'output_audio_buffer.stopped' || t === 'output_audio_buffer.cleared') {
+      this.h.onSpeaking?.(false);
+    } else if (t === 'response.done') {
+      const r = ev.response ?? {};
+      // Catch any function calls we didn't see as separate events.
+      for (const item of r.output ?? []) if (item.type === 'function_call') await this.runToolCall(item.call_id, item.name, item.arguments);
+      const u = r.usage;
+      if (u) {
+        this.usage.audioIn += u.input_token_details?.audio_tokens ?? 0;
+        this.usage.textIn += u.input_token_details?.text_tokens ?? 0;
+        this.usage.cachedIn += u.input_token_details?.cached_tokens ?? 0;
+        this.usage.audioOut += u.output_token_details?.audio_tokens ?? 0;
+        this.usage.textOut += u.output_token_details?.text_tokens ?? 0;
+        this.h.onUsage({ ...this.usage });
+      }
+      // After tool results, let the model continue (one follow-up per response).
+      if (this.pendingToolOutputs) {
+        this.pendingToolOutputs = false;
+        this.send({ type: 'response.create' });
+      }
+    } else if (t === 'error') {
+      console.warn('Realtime error', ev.error);
+    }
+  }
+}

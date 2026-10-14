@@ -5,3 +5,4 @@ dist/
 *.log
 .DS_Store
 spikes/handwriting/results/
+apps/web/e2e-results/
