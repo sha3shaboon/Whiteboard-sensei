@@ -28,10 +28,10 @@ describe('server', () => {
     });
 
     it('mints a client secret without exposing the server key', async () => {
-      const fetchMock = vi.fn(async () => ok({ value: 'ek_123', expires_at: 999 }));
+      const fetchMock = vi.fn(async () => ok({ value: 'ek_123', expires_at: 999, model: 'gpt-realtime-2.1' }));
       const app = createApp({ realtime, recognizer: null, fetchImpl: fetchMock as unknown as typeof fetch });
       const res = await app.request('/api/realtime/session', { method: 'POST', headers: { 'x-access-code': 'trial-01' } });
-      expect(await res.json()).toEqual({ value: 'ek_123', expires_at: 999 });
+      expect(await res.json()).toEqual({ value: 'ek_123', expires_at: 999, model: 'gpt-realtime-2.1' });
 
       const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       expect(url).toBe('https://api.openai.com/v1/realtime/client_secrets');
@@ -45,11 +45,11 @@ describe('server', () => {
       const fetchMock = vi
         .fn()
         .mockResolvedValueOnce(new Response('bad transcription model', { status: 400 }))
-        .mockResolvedValueOnce(ok({ value: 'ek_2', expires_at: 1 }));
+        .mockResolvedValueOnce(ok({ value: 'ek_2', expires_at: 1, model: 'gpt-realtime-2.1' }));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
       const app = createApp({ realtime, recognizer: null, fetchImpl: fetchMock as unknown as typeof fetch });
       const res = await app.request('/api/realtime/session', { method: 'POST' });
-      expect(await res.json()).toEqual({ value: 'ek_2', expires_at: 1 });
+      expect(await res.json()).toEqual({ value: 'ek_2', expires_at: 1, model: 'gpt-realtime-2.1' });
       const retryBody = JSON.parse((fetchMock.mock.calls[1] as [string, RequestInit])[1].body as string);
       expect(retryBody.session.audio.input.transcription).toBeUndefined();
     });

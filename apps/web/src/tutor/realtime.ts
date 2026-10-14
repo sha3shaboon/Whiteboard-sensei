@@ -12,12 +12,17 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+/** Token counts summed over all responses (input counts include the cached part). */
 export interface Usage {
+  model: string;
+  responses: number;
   audioIn: number;
-  audioOut: number;
+  audioInCached: number;
   textIn: number;
+  textInCached: number;
+  imageIn: number;
+  audioOut: number;
   textOut: number;
-  cachedIn: number;
 }
 
 export interface RealtimeHandlers {
@@ -105,7 +110,7 @@ export class RealtimeClient {
   private paused = false;
   private continueTimer: ReturnType<typeof setTimeout> | undefined;
   private gapTimer: ReturnType<typeof setTimeout> | undefined;
-  private usage: Usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0, cachedIn: 0 };
+  private usage: Usage = { model: '', responses: 0, audioIn: 0, audioInCached: 0, textIn: 0, textInCached: 0, imageIn: 0, audioOut: 0, textOut: 0 };
   private localId = 0;
 
   constructor(private h: RealtimeHandlers) {}
@@ -120,7 +125,8 @@ export class RealtimeClient {
       const tokenRes = await apiFetch('/api/realtime/session', { method: 'POST' });
       if (tokenRes.status === 401) throw new AccessCodeError();
       if (!tokenRes.ok) throw new Error((await tokenRes.json().catch(() => null))?.error ?? `Server error ${tokenRes.status}`);
-      const { value: key } = (await tokenRes.json()) as { value: string };
+      const { value: key, model } = (await tokenRes.json()) as { value: string; model?: string };
+      this.usage.model = model ?? '';
 
       const pc = (this.pc = new RTCPeerConnection());
       this.audio = new Audio();
@@ -391,9 +397,14 @@ export class RealtimeClient {
       for (const item of r.output ?? []) if (item.type === 'function_call') await this.runToolCall(item.call_id, item.name, item.arguments);
       const u = r.usage;
       if (u) {
-        this.usage.audioIn += u.input_token_details?.audio_tokens ?? 0;
-        this.usage.textIn += u.input_token_details?.text_tokens ?? 0;
-        this.usage.cachedIn += u.input_token_details?.cached_tokens ?? 0;
+        const inp = u.input_token_details ?? {};
+        const cached = inp.cached_tokens_details ?? {};
+        this.usage.responses++;
+        this.usage.audioIn += inp.audio_tokens ?? 0;
+        this.usage.audioInCached += cached.audio_tokens ?? 0;
+        this.usage.textIn += inp.text_tokens ?? 0;
+        this.usage.textInCached += cached.text_tokens ?? 0;
+        this.usage.imageIn += inp.image_tokens ?? 0;
         this.usage.audioOut += u.output_token_details?.audio_tokens ?? 0;
         this.usage.textOut += u.output_token_details?.text_tokens ?? 0;
         this.h.onUsage({ ...this.usage });

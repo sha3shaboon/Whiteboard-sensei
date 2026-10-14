@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Status, Usage } from '../tutor/realtime';
 import { Icon } from './Icon';
+import { sessionCost } from '../tutor/pricing';
 
 export interface ChatMessage {
   id: string;
@@ -33,10 +34,6 @@ interface Props {
   onDemo(): void;
 }
 
-// Approximate audio prices (USD per 1M tokens) for gpt-realtime-2.1 from OpenAI's pricing page.
-// Text tokens are excluded; treat this as a rough guide and confirm current prices.
-const AUDIO_IN_PER_M = 32;
-const AUDIO_OUT_PER_M = 64;
 
 export function ChatPanel(p: Props) {
   const [draft, setDraft] = useState('');
@@ -57,7 +54,7 @@ export function ChatPanel(p: Props) {
   };
 
   const visible = p.messages.filter((m) => p.showEvents || m.role !== 'event');
-  const audioCost = p.usage ? (p.usage.audioIn * AUDIO_IN_PER_M + p.usage.audioOut * AUDIO_OUT_PER_M) / 1e6 : 0;
+  const cost = p.usage ? sessionCost(p.usage) : null;
 
   return (
     <aside className="chat-panel">
@@ -165,9 +162,18 @@ export function ChatPanel(p: Props) {
           <label>
             <input type="checkbox" checked={p.showEvents} onChange={(e) => p.onShowEvents(e.target.checked)} /> Show board events
           </label>
-          {p.usage && (
-            <span title="Audio tokens only, at approximate list prices">
-              {p.minutes.toFixed(1)} min · ≈${audioCost.toFixed(3)} audio
+          {p.usage && cost && (
+            <span
+              className="cost"
+              title={[
+                `${p.usage.model || 'model unknown'} · ${p.usage.responses} responses`,
+                ...cost.parts.map((x) => `${x.label}: ${x.tokens.toLocaleString()} tokens ≈ $${x.cost.toFixed(3)}`),
+                p.usage.imageIn ? `Images in: ${p.usage.imageIn.toLocaleString()} tokens (not priced)` : '',
+                'List prices; voice transcription billed separately.',
+              ].filter(Boolean).join('\n')}
+            >
+              {p.minutes.toFixed(1)} min · ≈${cost.total.toFixed(2)}
+              {p.minutes >= 0.5 ? ` ($${(cost.total / p.minutes).toFixed(2)}/min)` : ''}
             </span>
           )}
         </footer>

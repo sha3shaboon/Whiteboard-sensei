@@ -12,6 +12,8 @@ export interface RealtimeConfig {
 export interface ClientSecret {
   value: string;
   expires_at: number;
+  /** So the client can price usage for the model actually in use. */
+  model?: string;
 }
 
 export async function createClientSecret(
@@ -52,5 +54,5 @@ export async function createClientSecret(
     throw new Error(`client_secrets failed: ${res.status} ${await res.text()}`);
   }
   const data = (await res.json()) as ClientSecret;
-  return { value: data.value, expires_at: data.expires_at };
+  return { value: data.value, expires_at: data.expires_at, model: config.model };
 }
