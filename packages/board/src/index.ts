@@ -7,3 +7,4 @@ export * from './summary';
 export * from './events';
 export * from "./transform";
 export * from './diagram';
+export * from './routing';

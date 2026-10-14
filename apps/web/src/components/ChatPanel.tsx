@@ -16,6 +16,9 @@ interface Props {
   micOn: boolean;
   hasMic: boolean;
   speaking: boolean;
+  paused: boolean;
+  onPause(): void;
+  onResume(): void;
   usage: Usage | null;
   minutes: number;
   showEvents: boolean;
@@ -63,11 +66,20 @@ export function ChatPanel(p: Props) {
           <div className="chat-title">Tutor</div>
           <div className={`chat-status ${p.status}`}>
             <span className={`dot ${p.speaking ? 'speaking' : ''}`} />
-            {p.status === 'connected' ? (p.speaking ? 'Speaking…' : 'Listening') : p.status === 'connecting' ? 'Connecting…' : p.status === 'error' ? 'Connection failed' : 'Not connected'}
+            {p.status === 'connected' ? (p.paused ? 'Paused' : p.speaking ? 'Speaking…' : 'Listening') : p.status === 'connecting' ? 'Connecting…' : p.status === 'error' ? 'Connection failed' : 'Not connected'}
           </div>
         </div>
         {connected ? (
           <div className="header-actions">
+            {p.paused ? (
+              <button className="pill-btn" onClick={p.onResume} title="Let the tutor continue">
+                <Icon name="play" size={16} /> Continue
+              </button>
+            ) : (
+              <button className="pill-btn" onClick={p.onPause} title="Stop the tutor for a moment (you can also just start talking)">
+                <Icon name="pause" size={16} /> Pause
+              </button>
+            )}
             {p.hasMic && (
               <button className={`icon-btn ${p.micOn ? '' : 'off'}`} onClick={p.onToggleMic} title={p.micOn ? 'Mute microphone' : 'Unmute microphone'} aria-label={p.micOn ? 'Mute microphone' : 'Unmute microphone'}>
                 <Icon name={p.micOn ? 'mic' : 'micOff'} />

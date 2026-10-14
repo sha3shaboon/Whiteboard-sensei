@@ -4,16 +4,20 @@
 
 import {
   COLORS,
-  center,
+  arrowBounds,
+  branchBetween,
   compileExpression,
+  curveBetween,
   layoutDiagram,
+  routeBetween,
+  straightBetween,
   resolvePlacement,
   union,
   type Board,
+  type ArrowPath,
   type BoardElement,
   type Bounds,
   type DiagramLayout,
-  type Point,
   type Region,
 } from '@ai-tutor/board';
 import { SHAPE_FONT, wrapLines, type BoardView } from '@ai-tutor/board/view';
@@ -30,7 +34,7 @@ export const TOOLS: ToolDefinition[] = [
     type: 'function',
     name: 'write_steps',
     description:
-      'Write a worked solution or derivation as a sequence of math lines, each with an optional short note explaining the move (e.g. "subtract 4 from both sides"). Use this whenever you solve or transform anything step by step. Each step gets its own id so you can point at it later.',
+      'Write the next line of a solution or derivation, with an optional short note explaining the move (e.g. "subtract 4 from both sides"). Normally pass ONE step per call, as you say it; consecutive calls continue the same column underneath, aligned. Each step gets its own id so you can point at it later.',
     parameters: obj(
       {
         steps: {
@@ -53,7 +57,7 @@ export const TOOLS: ToolDefinition[] = [
     type: 'function',
     name: 'draw_diagram',
     description:
-      'Draw a diagram of boxes connected by arrows, laid out automatically. Use it for processes and cycles (photosynthesis, water cycle, an algorithm), cause and effect, timelines, hierarchies and classifications, concept maps, parts of a system. Layouts: "flow-right" (sequence/timeline), "flow-down" (steps), "tree" (hierarchy/classification), "cycle" (repeating process), "hub" (central idea with related ideas; the first node is the center).',
+      'Draw a diagram of boxes connected by arrows, laid out and routed automatically (it draws in box by box). Afterwards, explain it part by part, annotating each part as you talk about it. Use it for processes and cycles (photosynthesis, water cycle, an algorithm), cause and effect, timelines, hierarchies and classifications, concept maps, parts of a system. Layouts: "flow-right" (sequence/timeline), "flow-down" (steps), "tree" (hierarchy/classification), "cycle" (repeating process), "hub" (central idea with related ideas; the first node is the center).',
     parameters: obj(
       {
         layout: { type: 'string', enum: ['flow-right', 'flow-down', 'tree', 'cycle', 'hub'] },
@@ -111,7 +115,7 @@ export const TOOLS: ToolDefinition[] = [
     type: 'function',
     name: 'ask_question',
     description:
-      'Ask the student to do something ON THE BOARD. kind "write": shows the question with an answer box; the student writes or draws inside it and presses Done, and you will get an [Answer] message with what they wrote. kind "choice": shows a clickable multiple-choice card; you get an [Answer] message when they pick. Use this often: after explaining an idea, to check understanding, and for practice problems. After calling it, briefly invite them to answer and then wait.',
+      'Ask the student to do something ON THE BOARD. kind "write": shows the question with an answer box; the student writes or draws inside it and presses Done, and you get an [Answer] message with what they wrote. kind "choice": a clickable multiple-choice card; you get an [Answer] when they pick. Use it for practice at the end of an explanation or worked example, or for a step that is good for the student to try. Not for confirming each step. After calling it, invite them to answer and wait.',
     parameters: obj(
       {
         question: { type: 'string', description: 'The question. Inline math between $...$ (choice cards) or plain text.' },
@@ -229,12 +233,15 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
         const note = str(s.note) ? measureText(str(s.note), 'note') : null;
         return { math, mathSize: view.measure({ type: 'math', content: math }), note };
       });
-      const mathW = Math.max(...rows.map((r) => r.mathSize.width));
       const noteGap = 32, rowGap = 10;
+      // Continuing a previous step block: keep its equation and note columns aligned.
+      const prev = previousStepRow(board);
+      const mathW = Math.max(...rows.map((r) => r.mathSize.width), prev ? prev.noteX - prev.mathX - noteGap : 0);
       const rowH = rows.map((r) => Math.max(r.mathSize.height, r.note?.size.height ?? 0));
       const width = Math.max(title?.size.width ?? 0, mathW + (rows.some((r) => r.note) ? noteGap + Math.max(...rows.map((r) => r.note?.size.width ?? 0)) : 0));
       const height = (title ? title.size.height + 8 : 0) + rowH.reduce((a, b) => a + b, 0) + rowGap * (rows.length - 1);
       const origin = resolvePlacement(board, { width, height }, str(args.placement) || undefined, view.getViewport());
+      if (prev && !str(args.placement) && Math.abs(origin.x - prev.mathX) < 2) origin.x = prev.mathX;
       let y = origin.y;
       const ids: string[] = [];
       let titleId: string | undefined;
@@ -301,15 +308,21 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       let titleId: string | undefined;
       if (title) titleId = ref(addAt({ type: 'text', content: title.content }, { x: origin.x, y: origin.y, ...title.size }));
       const placed = new Map<string, BoardElement>();
+      const pivot = { x: origin.x + area.width / 2, y: origin.y + titleH + area.height / 2 };
+      const route = (a: Bounds, b: Bounds): ArrowPath =>
+        layout === 'cycle' ? curveBetween(a, b, pivot) : layout === 'hub' ? straightBetween(a, b) : layout === 'tree' ? branchBetween(a, b) : routeBetween(a, b);
+      const arrows: string[] = [];
+      const drawn = new Set<number>();
+      // Box, then the arrows that can now connect to it: the diagram builds up in reading order.
       sized.forEach((n, i) => {
         const b = boxes[i]!;
         placed.set(n.key, addAt({ type: 'shape', content: { shape: n.shape, color: COLORS.aiInk, label: n.label } }, { x: origin.x + b.x, y: origin.y + titleH + b.y, width: b.width, height: b.height }));
+        edges.forEach((e, k) => {
+          if (drawn.has(k) || !placed.has(e.from) || !placed.has(e.to)) return;
+          drawn.add(k);
+          arrows.push(ref(addArrow(route(placed.get(e.from)!.bounds, placed.get(e.to)!.bounds), e.label)));
+        });
       });
-      const arrows: string[] = [];
-      for (const e of edges) {
-        const a = placed.get(e.from)!, b = placed.get(e.to)!;
-        arrows.push(ref(addArrow(a.bounds, b.bounds, e.label)));
-      }
       view.ensureVisible({ ...origin, ...total });
       return { ok: true, title: titleId, nodes: Object.fromEntries([...placed].map(([k, el]) => [k, ref(el)])), arrows };
     }
@@ -362,7 +375,7 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
     case 'draw_arrow': {
       const a = board.get(id(args.from_id)), b = board.get(id(args.to_id));
       if (!a || !b) return { ok: false, error: `Unknown item ${!a ? args.from_id : args.to_id}` };
-      return { ok: true, id: ref(addArrow(a.bounds, b.bounds, str(args.label) || undefined)) };
+      return { ok: true, id: ref(addArrow(routeBetween(a.bounds, b.bounds), str(args.label) || undefined)) };
     }
 
     case 'annotate': {
@@ -388,11 +401,8 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       return { ok: false, error: `Unknown tool ${name}` };
   }
 
-  function addArrow(from: Bounds, to: Bounds, label?: string): BoardElement {
-    const a = edgePoint(from, center(to));
-    const b = edgePoint(to, center(from));
-    const bounds = { x: Math.min(a.x, b.x) - 8, y: Math.min(a.y, b.y) - 8, width: Math.abs(b.x - a.x) + 16, height: Math.abs(b.y - a.y) + 16 };
-    return addAt({ type: 'arrow', content: { from: a, to: b, color: COLORS.aiInk, label } }, bounds);
+  function addArrow(path: ArrowPath, label?: string): BoardElement {
+    return addAt({ type: 'arrow', content: { ...path, color: COLORS.aiInk, label } }, arrowBounds(path));
   }
 }
 
@@ -411,13 +421,15 @@ function nodeSize(label: string, shape: 'rectangle' | 'ellipse'): { width: numbe
   return { width, height: Math.max(shape === 'ellipse' ? 64 : 52, lines * SHAPE_FONT * 1.25 + (shape === 'ellipse' ? 36 : 24)) };
 }
 
-/** Where the line from the box's center toward `toward` leaves the box. */
-function edgePoint(b: Bounds, toward: Point): Point {
-  const c = center(b);
-  const dx = toward.x - c.x, dy = toward.y - c.y;
-  if (dx === 0 && dy === 0) return c;
-  const sx = dx !== 0 ? b.width / 2 / Math.abs(dx) : Infinity;
-  const sy = dy !== 0 ? b.height / 2 / Math.abs(dy) : Infinity;
-  const s = Math.min(sx, sy);
-  return { x: c.x + dx * s, y: c.y + dy * s };
+/**
+ * If the most recent AI item is a step (an AI math line, possibly with a note to its right),
+ * returns the x of its equation and note columns so the next step lines up with it.
+ */
+function previousStepRow(board: Board): { mathX: number; noteX: number } | null {
+  const ai = board.all().filter((e) => e.author === 'ai' && e.type !== 'annotation' && e.type !== 'arrow');
+  const last = ai.at(-1), beforeLast = ai.at(-2);
+  const math = last?.type === 'math' ? last : beforeLast?.type === 'math' && last?.type === 'text' ? beforeLast : null;
+  if (!math) return null;
+  const note = last !== math && last && last.bounds.x > math.bounds.x + math.bounds.width ? last : null;
+  return { mathX: math.bounds.x, noteX: note ? note.bounds.x : math.bounds.x + math.bounds.width + 32 };
 }

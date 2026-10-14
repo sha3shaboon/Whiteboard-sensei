@@ -27,8 +27,9 @@ export interface RealtimeHandlers {
   onToolCall(name: string, args: Record<string, unknown>): Promise<unknown> | unknown;
   onUsage(usage: Usage): void;
   onSpeaking?(speaking: boolean): void;
-  /** After each AI response: whether it called any tools. */
+  /** After each AI response that wasn't interrupted: whether it called any tools. */
   onResponseDone?(usedTools: boolean): void;
+  onPaused?(paused: boolean): void;
 }
 
 type ServerEvent = { type: string; [key: string]: any };
@@ -76,6 +77,14 @@ export class RealtimeClient {
   private transcripts = new Map<string, string>();
   private handledCalls = new Set<string>();
   private pendingToolOutputs = false;
+  // Pacing: the AI teaches one step per response. After a step that used the board, we hand it the
+  // turn again only once its voice has finished playing, so the board never runs ahead of the narration.
+  private responseActive = false;
+  private speaking = false;
+  private userSpeaking = false;
+  private continuePending = false;
+  private paused = false;
+  private continueTimer: ReturnType<typeof setTimeout> | undefined;
   private usage: Usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0, cachedIn: 0 };
   private localId = 0;
 
@@ -152,6 +161,9 @@ export class RealtimeClient {
   }
 
   private teardown(): void {
+    this.cancelContinue();
+    this.responseActive = this.speaking = this.userSpeaking = false;
+    this.setPaused(false);
     const { dc, pc, mic, audio } = this;
     this.dc = this.pc = this.mic = this.audio = null;
     dc?.close();
@@ -172,8 +184,34 @@ export class RealtimeClient {
   sendText(text: string): void {
     const id = `local-${++this.localId}`;
     this.h.onTranscript(id, 'user', text, true);
+    // Typing mid-explanation interrupts, exactly like speaking does.
+    this.interrupt();
+    this.setPaused(false);
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
     this.send({ type: 'response.create' });
+  }
+
+  /** Stops the AI right now: cancels the response, drops unplayed audio, and doesn't continue. */
+  interrupt(): void {
+    this.cancelContinue();
+    if (this.responseActive) this.send({ type: 'response.cancel' });
+    if (this.speaking) this.send({ type: 'output_audio_buffer.clear' });
+  }
+
+  /** Pause button: stop and stay quiet until resumed (or until the student speaks/types). */
+  pause(): void {
+    this.interrupt();
+    this.setPaused(true);
+  }
+
+  resume(): void {
+    this.setPaused(false);
+    this.addContext('[Student] Please continue from where you stopped.');
+    this.send({ type: 'response.create' });
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
   }
 
   /** Adds context (board events) without making the AI speak. Optionally with a small image. */
@@ -183,9 +221,40 @@ export class RealtimeClient {
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content } });
   }
 
-  /** Asks the AI to respond now (e.g. after "Check my work"). */
+  /** Asks the AI to respond now (e.g. after "Check my work"), interrupting whatever it was saying. */
   respond(): void {
+    this.interrupt();
+    this.setPaused(false);
     this.send({ type: 'response.create' });
+  }
+
+  private setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    this.h.onPaused?.(paused);
+  }
+
+  private cancelContinue(): void {
+    this.continuePending = false;
+    clearTimeout(this.continueTimer);
+  }
+
+  private scheduleContinue(): void {
+    this.continuePending = true;
+    clearTimeout(this.continueTimer);
+    // Safety net in case the "audio stopped" event never arrives.
+    this.continueTimer = setTimeout(() => this.tryContinue(true), 20_000);
+    this.tryContinue();
+  }
+
+  private tryContinue(force = false): void {
+    if (!this.continuePending || this.paused || this.userSpeaking || this.responseActive) return;
+    if (this.speaking && !force) return;
+    this.cancelContinue();
+    // A short, natural pause between steps (also a window for the student to jump in).
+    setTimeout(() => {
+      if (!this.paused && !this.userSpeaking && !this.responseActive) this.send({ type: 'response.create' });
+    }, 400);
   }
 
   private send(event: object): void {
@@ -229,11 +298,25 @@ export class RealtimeClient {
     } else if (t === 'response.function_call_arguments.done') {
       await this.runToolCall(ev.call_id, ev.name, ev.arguments);
     } else if (t === 'output_audio_buffer.started') {
+      this.speaking = true;
       this.h.onSpeaking?.(true);
     } else if (t === 'output_audio_buffer.stopped' || t === 'output_audio_buffer.cleared') {
+      this.speaking = false;
       this.h.onSpeaking?.(false);
+      this.tryContinue();
+    } else if (t === 'input_audio_buffer.speech_started') {
+      // The student started talking: they have the floor. The server cancels the AI's reply itself.
+      this.userSpeaking = true;
+      this.cancelContinue();
+      this.setPaused(false);
+    } else if (t === 'input_audio_buffer.speech_stopped') {
+      this.userSpeaking = false;
+    } else if (t === 'response.created') {
+      this.responseActive = true;
     } else if (t === 'response.done') {
+      this.responseActive = false;
       const r = ev.response ?? {};
+      const interrupted = r.status === 'cancelled';
       // Catch any function calls we didn't see as separate events.
       for (const item of r.output ?? []) if (item.type === 'function_call') await this.runToolCall(item.call_id, item.name, item.arguments);
       const u = r.usage;
@@ -245,12 +328,12 @@ export class RealtimeClient {
         this.usage.textOut += u.output_token_details?.text_tokens ?? 0;
         this.h.onUsage({ ...this.usage });
       }
-      this.h.onResponseDone?.(this.pendingToolOutputs || (r.output ?? []).some((i: { type?: string }) => i.type === 'function_call'));
-      // After tool results, let the model continue (one follow-up per response).
-      if (this.pendingToolOutputs) {
-        this.pendingToolOutputs = false;
-        this.send({ type: 'response.create' });
-      }
+      const usedTools = this.pendingToolOutputs || (r.output ?? []).some((i: { type?: string }) => i.type === 'function_call');
+      if (!interrupted) this.h.onResponseDone?.(usedTools);
+      // A step that used the board: continue with the next step once this one has been heard.
+      // Interrupted replies don't continue; the student's question comes first.
+      if (this.pendingToolOutputs && !interrupted) this.scheduleContinue();
+      this.pendingToolOutputs = false;
     } else if (t === 'error') {
       console.warn('Realtime error', ev.error);
     }

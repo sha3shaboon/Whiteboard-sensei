@@ -1,4 +1,4 @@
-import type { BoardElement, Bounds, Point, Region, StrokePoint } from './elements';
+import type { ArrowElement, BoardElement, Bounds, Point, Region, StrokePoint } from './elements';
 
 export function boundsOfPoints(points: Point[], pad = 0): Bounds {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -77,6 +77,18 @@ export function regionBounds(target: Bounds, r: Region): Bounds {
   };
 }
 
+/** The arrow as a polyline (curves sampled), for hit-testing, bounds and partial drawing. */
+export function arrowPolyline(p: Pick<ArrowElement['content'], 'from' | 'to' | 'via' | 'control'>): Point[] {
+  if (p.control) {
+    const c = p.control;
+    return Array.from({ length: 21 }, (_, i) => {
+      const t = i / 20, u = 1 - t;
+      return { x: u * u * p.from.x + 2 * u * t * c.x + t * t * p.to.x, y: u * u * p.from.y + 2 * u * t * c.y + t * t * p.to.y };
+    });
+  }
+  return [p.from, ...(p.via ?? []), p.to];
+}
+
 /** End points of a line stored as positive bounds plus a direction flag. */
 export function lineEnds(b: Bounds, flip?: boolean): [Point, Point] {
   return flip
@@ -91,7 +103,7 @@ export function hitTest(el: BoardElement, p: Point, tolerance = 6): boolean {
     case 'stroke':
       return nearPolyline(el.content.points, p, tolerance + el.content.width / 2);
     case 'arrow':
-      return distToSegment(p, el.content.from, el.content.to) <= tolerance + 2;
+      return nearPolyline(arrowPolyline(el.content), p, tolerance + 2);
     case 'shape': {
       const b = el.bounds;
       if (el.content.shape === 'line') {

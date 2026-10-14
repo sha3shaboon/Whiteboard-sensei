@@ -57,13 +57,25 @@ export function resolvePlacement(board: Board, size: Size, placement: string | u
     y = content.y + content.height + SECTION_GAP;
   } else if (content) {
     // Default: continue under the AI's most recent block, else under everything.
-    const lastAi = [...board.all()].reverse().find((e) => e.author === 'ai' && e.type !== 'annotation');
-    const anchor = lastAi?.bounds ?? content;
+    const lastAi = [...board.all()].reverse().find((e) => e.author === 'ai' && e.type !== 'annotation' && e.type !== 'arrow');
+    // Use the whole row the last item sits in (e.g. a step's equation and its note), so we continue
+    // under the row's left edge rather than under whatever happened to be added last.
+    const anchor = lastAi ? rowOf(board, lastAi.bounds) : content;
     x = anchor.x;
     y = anchor.y + anchor.height + GAP;
   }
 
   return avoidOverlap({ x, y, ...size }, blockers, direction);
+}
+
+/** Union of AI items vertically overlapping `b` (its row), within 900 units horizontally. */
+function rowOf(board: Board, b: Bounds): Bounds {
+  const row = board
+    .all()
+    .filter((e) => e.author === 'ai' && e.type !== 'annotation' && e.type !== 'arrow')
+    .map((e) => e.bounds)
+    .filter((o) => o.y < b.y + b.height && b.y < o.y + o.height && Math.abs(o.x - b.x) < 900);
+  return union(row) ?? b;
 }
 
 /** Slides the box (down, or right then down) until it overlaps none of the blockers. */

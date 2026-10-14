@@ -50,6 +50,10 @@ export class BoardView {
   private editor: HTMLTextAreaElement | null = null;
   private lastPenAt = -Infinity;
   private dirty = true;
+  /** Draw-in animations for AI items: start time and duration (ms, performance.now clock). */
+  private reveals = new Map<ElementId, { start: number; dur: number }>();
+  /** Items added in a burst are revealed one after another, starting from here. */
+  private revealCursor = 0;
   private raf = 0;
   private cleanup: (() => void)[] = [];
 
@@ -164,9 +168,31 @@ export class BoardView {
       this.domNodes.delete(c.element.id);
       if (this.selected === c.element.id) this.selected = null;
     } else {
+      if (c.kind === 'added' && c.origin === 'ai') this.scheduleReveal(c.element);
       this.syncDom(c.kind === 'added' ? c.element : c.after);
     }
     this.invalidate();
+  }
+
+  private scheduleReveal(el: BoardElement): void {
+    const dur = REVEAL_MS[el.type] ?? 400;
+    const start = Math.max(performance.now(), this.revealCursor);
+    this.reveals.set(el.id, { start, dur });
+    // The next item in the same burst starts when this one is mostly drawn.
+    this.revealCursor = start + Math.min(dur * 0.8, 420);
+  }
+
+  /** 0..1 draw-in progress of an element (1 when not animating). */
+  private progress(id: ElementId, now: number): number {
+    const r = this.reveals.get(id);
+    if (!r) return 1;
+    const p = (now - r.start) / r.dur;
+    if (p >= 1) {
+      this.reveals.delete(id);
+      return 1;
+    }
+    this.dirty = true; // keep animating
+    return Math.max(0, p);
   }
 
   private syncDom(el: BoardElement): void {
@@ -234,17 +260,22 @@ export class BoardView {
 
     const g = this.gesture;
     const lookup = (id: string) => this.board.get(id);
+    const now = performance.now();
     for (const el of this.board.all()) {
       if (DOM_TYPES.has(el.type)) continue;
       ctx.save();
       if (g?.kind === 'erase' && g.ids.has(el.id)) ctx.globalAlpha = 0.25;
       if (g?.kind === 'move' && g.id === el.id) ctx.translate(g.dx, g.dy);
-      drawElement(ctx, el, lookup);
+      drawElement(ctx, el, lookup, this.progress(el.id, now));
       ctx.restore();
     }
     for (const [id, node] of this.domNodes) {
       const fade = g?.kind === 'erase' && g.ids.has(id);
-      node.style.opacity = fade ? '0.25' : '1';
+      const p = this.progress(id, now);
+      // Text, math and tables are "written" left to right; interactive cards fade in.
+      const interactive = node.dataset.interactive !== undefined;
+      node.style.opacity = fade ? '0.25' : interactive ? String(p) : p <= 0 ? '0' : '1';
+      node.style.clipPath = !interactive && p < 1 ? `inset(-4px ${(1 - easeOut(p)) * 100}% -4px -4px)` : '';
       node.style.transform = g?.kind === 'move' && g.id === id ? `translate(${g.dx}px, ${g.dy}px)` : '';
     }
 
@@ -572,6 +603,22 @@ export class BoardView {
     }
   }
 }
+
+/** How long each kind of AI item takes to draw in. */
+const REVEAL_MS: Partial<Record<BoardElement['type'], number>> = {
+  text: 450,
+  math: 750,
+  code: 700,
+  table: 900,
+  choice: 400,
+  answer: 350,
+  shape: 320,
+  arrow: 450,
+  graph: 1500,
+  annotation: 550,
+};
+
+const easeOut = (p: number) => 1 - Math.pow(1 - p, 2);
 
 function clampZoom(z: number): number {
   return Math.min(4, Math.max(0.25, z));

@@ -17,6 +17,8 @@ const PATHS: Record<string, string> = {
   send: 'M4 12l16-8-6 16-2-7-8-1z',
   phone: 'M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2',
   stop: 'M6 6h12v12H6z',
+  pause: 'M8 5v14M16 5v14',
+  play: 'M7 5l12 7-12 7z',
 };
 
 export function Icon({ name, size = 20 }: { name: keyof typeof PATHS | string; size?: number }) {

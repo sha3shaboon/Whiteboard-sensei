@@ -22,11 +22,33 @@ await p.addInitScript(() => {
     close() { this.readyState = 'closed'; }
     send(raw) {
       const ev = JSON.parse(raw);
+      ev.__t = performance.now();
       window.__sent.push(ev);
+      // A long reply in progress gets cancelled like the real API does.
+      if (ev.type === 'response.cancel' && this.active) {
+        this.active = false;
+        this.server({ type: 'output_audio_buffer.cleared' });
+        this.server({ type: 'response.done', response: { id: 'long', status: 'cancelled', output: [] } });
+        return;
+      }
+      if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'LONG') this.nextLong = true;
       if (ev.type !== 'response.create') return;
       const n = ++responses;
       const rid = 'resp' + n, item = 'item' + n;
+      if (this.nextLong) {
+        // Starts speaking and keeps going until cancelled.
+        this.nextLong = false;
+        this.active = true;
+        this.server({ type: 'response.created', response: { id: 'long' } });
+        this.server({ type: 'output_audio_buffer.started' });
+        this.server({ type: 'response.output_audio_transcript.delta', item_id: 'long', delta: 'This is a long explanation…' });
+        return;
+      }
       if (n === 1) {
+        // Voice keeps playing for 1.5 s after the response is generated.
+        this.server({ type: 'response.created', response: { id: rid } });
+        this.server({ type: 'output_audio_buffer.started' });
+        setTimeout(() => { window.__stoppedAt = performance.now(); this.emit('message', { data: JSON.stringify({ type: 'output_audio_buffer.stopped' }) }); }, 1500);
         this.server({ type: 'response.output_audio_transcript.delta', item_id: item, delta: 'Hi! What would you like ' });
         this.server({ type: 'response.output_audio_transcript.delta', item_id: item, delta: 'to learn today?' });
         this.server({ type: 'response.output_audio_transcript.done', item_id: item, transcript: 'Hi! What would you like to learn today? Let me write an example.' });
@@ -82,6 +104,22 @@ await p.waitForTimeout(800);
 await p.getByRole('button', { name: /^B\s*4$/ }).click();
 await p.waitForTimeout(500);
 
+// Interruptions: a long reply in progress is cancelled by typing, and by the Pause button.
+await p.getByPlaceholder('Type a message…').fill('LONG');
+await p.keyboard.press('Enter');
+await p.waitForTimeout(200);
+await p.getByPlaceholder('Type a message…').fill('wait, why?');
+await p.keyboard.press('Enter');
+await p.waitForTimeout(300);
+await p.getByPlaceholder('Type a message…').fill('LONG');
+await p.keyboard.press('Enter');
+await p.waitForTimeout(200);
+await p.getByRole('button', { name: 'Pause' }).click();
+await p.waitForTimeout(200);
+const pausedLabel = await p.locator('.chat-status').textContent();
+await p.getByRole('button', { name: 'Continue' }).click();
+await p.waitForTimeout(300);
+
 await p.getByPlaceholder('Type a message…').fill('Is that right?');
 await p.keyboard.press('Enter');
 await p.waitForTimeout(300);
@@ -90,6 +128,7 @@ await p.waitForTimeout(500);
 await p.screenshot({ path: S + '/3-e2e.png' });
 
 const sent = await p.evaluate(() => window.__sent);
+const window_stoppedAt = await p.evaluate(() => window.__stoppedAt);
 const texts = sent.filter((e) => e.type === 'conversation.item.create').map((e) => e.item.type === 'message' ? e.item.content.map((c) => c.text ?? '[image]').join(' ') : 'TOOL_OUTPUT ' + e.item.output);
 let failed = 0;
 const check = (name, ok) => { if (!ok) failed++; console.log((ok ? 'PASS ' : 'FAIL ') + name); };
@@ -104,6 +143,16 @@ check('answer box submitted with handwriting, AI asked to respond', (() => { con
 check('choice pick sent, AI asked to respond', (() => { const i = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text?.includes('the student picked B) 4')); return i > 0 && sent[i + 1]?.type === 'response.create'; })());
 check('handwriting inside the box is reported as such', texts.some((t) => t.includes('inside answer box #3')));
 check('board nudge after two voice-only replies', texts.some((t) => t.startsWith('[Coach]')));
+check('next step waits until the voice has finished', (() => {
+  const creates = sent.filter((e) => e.type === 'response.create');
+  return creates.length >= 2 && creates[1].__t >= (window_stoppedAt ?? Infinity);
+})());
+check('typing during a reply cancels it first', (() => {
+  const i = sent.findIndex((e) => e.type === 'conversation.item.create' && e.item.content?.[0]?.text === 'wait, why?');
+  return i > 0 && sent.slice(0, i).some((e, k) => e.type === 'response.cancel' && k > sent.findIndex((x) => x.item?.content?.[0]?.text === 'LONG'));
+})());
+check('pause stops the reply and shows Paused', pausedLabel?.includes('Paused'));
+check('continue asks the tutor to go on', texts.some((t) => t.startsWith('[Student] Please continue')));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

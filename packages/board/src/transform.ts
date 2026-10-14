@@ -10,7 +10,13 @@ export function translated(el: BoardElement, dx: number, dy: number): ElementPat
     case 'arrow':
       return {
         bounds,
-        content: { ...el.content, from: { x: el.content.from.x + dx, y: el.content.from.y + dy }, to: { x: el.content.to.x + dx, y: el.content.to.y + dy } },
+        content: {
+          ...el.content,
+          from: { x: el.content.from.x + dx, y: el.content.from.y + dy },
+          to: { x: el.content.to.x + dx, y: el.content.to.y + dy },
+          via: el.content.via?.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+          control: el.content.control && { x: el.content.control.x + dx, y: el.content.control.y + dy },
+        },
       };
     default:
       return { bounds };

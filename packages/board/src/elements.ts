@@ -54,7 +54,19 @@ export type StrokeElement = ElementBase<
 export type TextElement = ElementBase<'text', { text: string; fontSize: number; color: string }>;
 export type MathElement = ElementBase<'math', { latex: string; fontSize: number; color: string }>;
 export type ShapeElement = ElementBase<'shape', { shape: 'rectangle' | 'ellipse' | 'line'; color: string; label?: string; /** Line runs bottom-left to top-right. */ flip?: boolean }>;
-export type ArrowElement = ElementBase<'arrow', { from: Point; to: Point; color: string; label?: string }>;
+export type ArrowElement = ElementBase<
+  'arrow',
+  {
+    from: Point;
+    to: Point;
+    /** Corner points of a right-angle path. */
+    via?: Point[];
+    /** Control point of a curved (quadratic) arrow. */
+    control?: Point;
+    color: string;
+    label?: string;
+  }
+>;
 export interface PlotPoint {
   x: number;
   y: number;

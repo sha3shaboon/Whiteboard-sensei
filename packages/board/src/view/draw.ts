@@ -2,7 +2,7 @@
 
 import type { AnnotationElement, AnswerElement, ArrowElement, BoardElement, Bounds, GraphElement, Point, ShapeElement, StrokeElement, StrokePoint } from '../elements';
 import { compileExpression } from '../expression';
-import { lineEnds, regionBounds } from '../geometry';
+import { arrowPolyline, lineEnds, regionBounds } from '../geometry';
 
 export const DOM_TYPES = new Set(['text', 'math', 'code', 'table', 'choice']);
 export const SHAPE_FONT = 16;
@@ -97,23 +97,93 @@ export function drawArrowLine(ctx: CanvasRenderingContext2D, from: Point, to: Po
   ctx.restore();
 }
 
-function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement) {
-  drawArrowLine(ctx, el.content.from, el.content.to, el.content.color);
-  if (el.content.label) {
-    const mx = (el.content.from.x + el.content.to.x) / 2, my = (el.content.from.y + el.content.to.y) / 2;
-    ctx.save();
-    ctx.fillStyle = el.content.color;
-    ctx.font = '15px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(el.content.label, mx, my - 8);
-    ctx.restore();
+/**
+ * Draws the first `progress` (0..1) of a polyline, with rounded corners once complete.
+ * Returns the end point and the direction of travel there (for the arrowhead).
+ */
+function tracePath(ctx: CanvasRenderingContext2D, pts: Point[], progress: number, radius: number): { end: Point; angle: number } {
+  const lens = pts.slice(1).map((q, i) => Math.hypot(q.x - pts[i]!.x, q.y - pts[i]!.y));
+  const total = lens.reduce((a, b) => a + b, 0);
+  let remaining = total * progress;
+  ctx.beginPath();
+  ctx.moveTo(pts[0]!.x, pts[0]!.y);
+  let end = pts[0]!, angle = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!, b = pts[i]!, len = lens[i - 1]!;
+    angle = Math.atan2(b.y - a.y, b.x - a.x);
+    if (remaining < len) {
+      end = { x: a.x + (b.x - a.x) * (remaining / Math.max(len, 1e-9)), y: a.y + (b.y - a.y) * (remaining / Math.max(len, 1e-9)) };
+      ctx.lineTo(end.x, end.y);
+      return { end, angle };
+    }
+    remaining -= len;
+    const next = pts[i + 1];
+    if (next && progress >= 1 && radius > 0) ctx.arcTo(b.x, b.y, next.x, next.y, Math.min(radius, len / 2, Math.hypot(next.x - b.x, next.y - b.y) / 2));
+    else ctx.lineTo(b.x, b.y);
+    end = b;
   }
+  return { end, angle };
+}
+
+function arrowHead(ctx: CanvasRenderingContext2D, tip: Point, angle: number, size: number) {
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(tip.x - size * Math.cos(angle - 0.42), tip.y - size * Math.sin(angle - 0.42));
+  ctx.lineTo(tip.x - size * Math.cos(angle + 0.42), tip.y - size * Math.sin(angle + 0.42));
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Text on a white rounded background, so labels stay readable over lines. */
+export function drawLabelPill(ctx: CanvasRenderingContext2D, text: string, at: Point, color: string) {
+  ctx.save();
+  ctx.font = '14px system-ui, sans-serif';
+  const w = ctx.measureText(text).width + 12, h = 20;
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.roundRect(at.x - w / 2, at.y - h / 2, w, h, 6);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, at.x, at.y + 0.5);
+  ctx.restore();
+}
+
+/** Midpoint of the longest segment: the calmest spot for a label. */
+function labelSpot(pts: Point[]): Point {
+  let best = 0, bestLen = -1;
+  for (let i = 1; i < pts.length; i++) {
+    const len = Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y);
+    if (len > bestLen) { bestLen = len; best = i; }
+  }
+  const a = pts[best - 1] ?? pts[0]!, b = pts[best] ?? pts[0]!;
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function drawArrow(ctx: CanvasRenderingContext2D, el: ArrowElement, progress: number) {
+  const pts = arrowPolyline(el.content);
+  const color = el.content.color;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Stop the line short of the tip so it doesn't poke through the head.
+  const { end, angle } = tracePath(ctx, pts, progress, el.content.control ? 0 : 10);
+  ctx.stroke();
+  if (progress > 0.15) arrowHead(ctx, end, angle, 11);
+  ctx.restore();
+  if (el.content.label && progress >= 1) drawLabelPill(ctx, el.content.label, labelSpot(pts), color);
 }
 
 const fmt = (n: number) => (Math.abs(n) >= 100 || Number.isInteger(n) ? String(Math.round(n)) : n.toFixed(1));
 
-function drawGraph(ctx: CanvasRenderingContext2D, el: GraphElement) {
+function drawGraph(ctx: CanvasRenderingContext2D, el: GraphElement, progress = 1) {
   const b = el.bounds;
+  ctx.globalAlpha *= Math.min(1, progress * 3);
+  const traced = Math.max(0, Math.min(1, (progress - 0.25) / 0.75));
   const [x0, x1] = el.content.xRange;
   ctx.save();
   ctx.strokeStyle = '#d4d4d0';
@@ -177,7 +247,7 @@ function drawGraph(ctx: CanvasRenderingContext2D, el: GraphElement) {
     ctx.strokeStyle = s.color;
     ctx.beginPath();
     let pen = false;
-    for (let i = 0; i <= N; i++) {
+    for (let i = 0; i <= Math.round(N * traced); i++) {
       const y = s.ys[i]!;
       if (!Number.isFinite(y) || (i > 0 && Math.abs(y - s.ys[i - 1]!) > (y1 - y0) * 2)) { pen = false; continue; }
       if (pen) ctx.lineTo(X(xs[i]!), Y(y));
@@ -189,7 +259,7 @@ function drawGraph(ctx: CanvasRenderingContext2D, el: GraphElement) {
   ctx.restore();
 
   // Marked points
-  for (const p of points) {
+  for (const p of traced >= 1 ? points : []) {
     ctx.fillStyle = '#dc2626';
     ctx.beginPath();
     ctx.arc(X(p.x), Y(p.y), 4.5, 0, Math.PI * 2);
@@ -271,38 +341,69 @@ function drawAnswerBox(ctx: CanvasRenderingContext2D, el: AnswerElement) {
   ctx.restore();
 }
 
-function drawAnnotation(ctx: CanvasRenderingContext2D, el: AnnotationElement, target: Bounds | undefined) {
+function drawAnnotation(ctx: CanvasRenderingContext2D, el: AnnotationElement, target: Bounds | undefined, progress = 1) {
   if (!target) return;
   const r = regionBounds(target, el.content.region);
+  const color = el.content.color;
   ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineCap = 'round';
   if (el.content.mode === 'highlight') {
+    // Sweeps left to right like a marker.
     ctx.fillStyle = 'rgba(250, 204, 21, 0.35)';
-    ctx.fillRect(r.x - 4, r.y - 4, r.width + 8, r.height + 8);
+    ctx.fillRect(r.x - 4, r.y - 4, (r.width + 8) * progress, r.height + 8);
   } else if (el.content.mode === 'circle') {
-    ctx.strokeStyle = el.content.color;
+    // Drawn as one loop, starting at the top-left like a hand would.
     ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.ellipse(r.x + r.width / 2, r.y + r.height / 2, r.width / 2 + 10, r.height / 2 + 8, -0.03, 0, Math.PI * 2);
+    const start = -Math.PI * 0.75;
+    ctx.ellipse(r.x + r.width / 2, r.y + r.height / 2, r.width / 2 + 10, r.height / 2 + 8, -0.03, start, start + Math.PI * 2 * Math.min(1, progress * 1.04));
     ctx.stroke();
   } else {
-    const tip = { x: r.x - 4, y: r.y + r.height / 2 };
-    drawArrowLine(ctx, { x: tip.x - 56, y: tip.y - 40 }, tip, el.content.color, 2.5);
-  }
-  if (el.content.note) {
-    ctx.fillStyle = el.content.color;
-    ctx.font = '15px system-ui, sans-serif';
-    ctx.fillText(el.content.note, el.content.mode === 'point' ? r.x - 120 : r.x, el.content.mode === 'point' ? r.y + r.height / 2 - 48 : r.y + r.height + 26);
+    const tip = { x: r.x - 6, y: r.y + r.height / 2 };
+    const tail = { x: tip.x - 52, y: tip.y - 36 };
+    const end = { x: tail.x + (tip.x - tail.x) * progress, y: tail.y + (tip.y - tail.y) * progress };
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(tail.x, tail.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+    if (progress > 0.3) arrowHead(ctx, end, Math.atan2(tip.y - tail.y, tip.x - tail.x), 12);
   }
   ctx.restore();
+  if (el.content.note && progress >= 1) {
+    const at =
+      el.content.mode === 'point'
+        ? { x: r.x - 58 - noteHalfWidth(ctx, el.content.note), y: r.y + r.height / 2 - 44 }
+        : { x: r.x + noteHalfWidth(ctx, el.content.note), y: r.y + r.height + 24 };
+    drawLabelPill(ctx, el.content.note, at, color);
+  }
 }
 
-export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, lookup: (id: string) => BoardElement | undefined): void {
+function noteHalfWidth(ctx: CanvasRenderingContext2D, text: string): number {
+  ctx.save();
+  ctx.font = '14px system-ui, sans-serif';
+  const w = ctx.measureText(text).width / 2 + 6;
+  ctx.restore();
+  return w;
+}
+
+/** Draws an element; `progress` (0..1) animates it in, as if it were being drawn. */
+export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, lookup: (id: string) => BoardElement | undefined, progress = 1): void {
+  const p = Math.max(0, Math.min(1, progress));
+  if (p <= 0) return;
+  const eased = 1 - Math.pow(1 - p, 3);
   switch (el.type) {
     case 'stroke': return drawStroke(ctx, el);
-    case 'shape': return drawShape(ctx, el);
-    case 'arrow': return drawArrow(ctx, el);
-    case 'graph': return drawGraph(ctx, el);
-    case 'answer': return drawAnswerBox(ctx, el);
-    case 'annotation': return drawAnnotation(ctx, el, lookup(el.content.target)?.bounds);
+    case 'shape':
+      ctx.globalAlpha *= eased;
+      return drawShape(ctx, el);
+    case 'arrow': return drawArrow(ctx, el, eased);
+    case 'graph': return drawGraph(ctx, el, p);
+    case 'answer':
+      ctx.globalAlpha *= eased;
+      return drawAnswerBox(ctx, el);
+    case 'annotation': return drawAnnotation(ctx, el, lookup(el.content.target)?.bounds, eased);
   }
 }

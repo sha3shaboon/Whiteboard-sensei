@@ -8,12 +8,12 @@ import { TutorBridge } from './tutor/bridge';
 import { DEMO } from './tutor/demo';
 import { INSTRUCTIONS } from './tutor/instructions';
 import { RealtimeClient, type Status, type Usage } from './tutor/realtime';
-import { executeTool, TOOLS } from './tutor/tools';
+import { executeTool, TOOLS, type ToolResult } from './tutor/tools';
 
 const demoAvailable = new URLSearchParams(location.search).has('demo');
 
 const BOARD_NUDGE =
-  '[Coach] Your last replies used only voice. In your next reply, put the content on the board (write_steps, draw_diagram, make_table, plot, annotate) and give the student something to do there with ask_question.';
+  '[Coach] Your last replies used only voice. When you explain, show it on the board too: one small step at a time, writing or annotating as you speak.';
 
 export function App() {
   const board = useMemo(() => new Board(), []);
@@ -28,6 +28,7 @@ export function App() {
   const [statusDetail, setStatusDetail] = useState<string>();
   const [micOn, setMicOn] = useState(true);
   const [speaking, setSpeaking] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -92,6 +93,7 @@ export function App() {
         },
         onUsage: setUsage,
         onSpeaking: setSpeaking,
+        onPaused: setPaused,
         onResponseDone: (usedTools) => nudge.current(usedTools),
       }),
     [board, upsert, eventLine],
@@ -153,13 +155,15 @@ export function App() {
   const runDemo = async () => {
     const view = viewRef.current;
     if (!view) return;
+    const results: ToolResult[] = [];
     for (const [i, step] of DEMO.entries()) {
       if (step.say) upsert({ id: `demo-${i}`, role: 'assistant', text: step.say, final: true });
-      if (step.tool) {
-        const result = executeTool(board, view, step.tool, step.args ?? {});
-        eventLine(`AI → board: ${step.tool} → ${JSON.stringify(result)}`);
-      }
-      await new Promise((r) => setTimeout(r, 900));
+      const args = typeof step.args === 'function' ? step.args(results) : (step.args ?? {});
+      const result = step.tool ? executeTool(board, view, step.tool, args) : { ok: true as const };
+      if (step.tool) eventLine(`AI → board: ${step.tool} → ${JSON.stringify(result)}`);
+      results.push(result);
+      // Roughly the time it takes to say the line.
+      await new Promise((r) => setTimeout(r, 600 + step.say.length * 35));
     }
   };
 
@@ -184,6 +188,9 @@ export function App() {
         micOn={micOn}
         hasMic={client.hasMic}
         speaking={speaking}
+        paused={paused}
+        onPause={() => client.pause()}
+        onResume={() => client.resume()}
         usage={usage}
         minutes={startedAt ? Math.max(0, now - startedAt) / 60000 : 0}
         showEvents={showEvents}
