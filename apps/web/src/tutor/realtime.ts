@@ -33,6 +33,18 @@ type ServerEvent = { type: string; [key: string]: any };
 
 class AccessCodeError extends Error {}
 
+/** Turns an OpenAI error response into a message a student (or the site owner) can act on. */
+async function describeOpenAIError(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { error?: { code?: string; type?: string; message?: string } } | null;
+  const e = body?.error;
+  if (e?.type === 'insufficient_quota' || e?.code === 'credit_balance_exhausted') {
+    return "The tutor is unavailable: this site's OpenAI account is out of credits. (Site owner: add credits in the OpenAI billing settings.)";
+  }
+  if (res.status === 401) return "The tutor is unavailable: the voice session key was rejected. Try again; if it keeps failing, the site's OpenAI key needs checking.";
+  if (res.status === 429) return 'The tutor is busy right now (rate limited). Please try again in a minute.';
+  return `Couldn't connect to the voice tutor (${res.status})${e?.message ? `: ${e.message}` : ''}`;
+}
+
 export class RealtimeClient {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
@@ -80,7 +92,8 @@ export class RealtimeClient {
         this.h.onStatus('connected', this.mic ? undefined : 'Microphone unavailable: type to talk');
         opts.onOpen?.();
       });
-      dc.addEventListener('close', () => this.h.onStatus('idle'));
+      // Only report a drop of the live channel, not the close we trigger ourselves in disconnect().
+      dc.addEventListener('close', () => this.dc === dc && this.disconnect());
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -89,21 +102,26 @@ export class RealtimeClient {
         body: offer.sdp,
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/sdp' },
       });
-      if (!sdpRes.ok) throw new Error(`Realtime connect failed (${sdpRes.status})`);
+      if (!sdpRes.ok) throw new Error(await describeOpenAIError(sdpRes));
       await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
     } catch (err) {
-      this.disconnect();
+      this.teardown();
       this.h.onStatus('error', err instanceof AccessCodeError ? 'access-code' : (err as Error).message);
     }
   }
 
   disconnect(): void {
-    this.dc?.close();
-    this.pc?.close();
-    this.mic?.getTracks().forEach((t) => t.stop());
-    if (this.audio) this.audio.srcObject = null;
-    this.dc = this.pc = this.mic = this.audio = null;
+    this.teardown();
     this.h.onStatus('idle');
+  }
+
+  private teardown(): void {
+    const { dc, pc, mic, audio } = this;
+    this.dc = this.pc = this.mic = this.audio = null;
+    dc?.close();
+    pc?.close();
+    mic?.getTracks().forEach((t) => t.stop());
+    if (audio) audio.srcObject = null;
   }
 
   get hasMic(): boolean {
