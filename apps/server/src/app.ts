@@ -1,16 +1,18 @@
 import { Hono } from 'hono';
 import { createClientSecret, type RealtimeConfig } from './realtime.js';
 import type { Recognizer } from './recognize.js';
+import type { StrokeLoader } from './strokes.js';
 
 export interface AppDeps {
   realtime: RealtimeConfig | null;
   recognizer: Recognizer | null;
   /** Trial access codes. When non-empty, every /api call except health needs one in `x-access-code`. */
   accessCodes?: string[];
+  strokes?: StrokeLoader;
   fetchImpl?: typeof fetch;
 }
 
-export function createApp({ realtime, recognizer, accessCodes = [], fetchImpl = fetch }: AppDeps) {
+export function createApp({ realtime, recognizer, accessCodes = [], strokes, fetchImpl = fetch }: AppDeps) {
   const app = new Hono();
   const codes = new Set(accessCodes.map((c) => c.trim()).filter(Boolean));
 
@@ -48,6 +50,17 @@ export function createApp({ realtime, recognizer, accessCodes = [], fetchImpl = 
       console.error(err);
       return c.json({ error: 'Recognition failed' }, 502);
     }
+  });
+
+  // Stroke order for up to 6 kanji/kana, e.g. /api/strokes/%E6%96%B0 for 新.
+  app.get('/api/strokes/:text', async (c) => {
+    if (!strokes) return c.json({ error: 'Stroke data is not available' }, 503);
+    const chars = [...decodeURIComponent(c.req.param('text'))].filter((ch) => /\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(ch));
+    if (!chars.length || chars.length > 6) return c.json({ error: 'Send 1-6 kanji or kana characters' }, 400);
+    const data = await Promise.all(chars.map((ch) => strokes(ch)));
+    const missing = chars.filter((_, i) => !data[i]);
+    if (missing.length) return c.json({ error: `No stroke data for ${missing.join(', ')}` }, 404);
+    return c.json({ chars: data, credit: 'Stroke order data: KanjiVG (CC BY-SA 3.0)' });
   });
 
   return app;

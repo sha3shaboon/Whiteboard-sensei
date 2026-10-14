@@ -5,6 +5,10 @@
 import {
   COLORS,
   applyStructureOp,
+  buildStrokeSvg,
+  strokeTypeName,
+  totalStrokes,
+  buildFigure,
   arrowBounds,
   createStructure,
   describeStructure,
@@ -19,6 +23,8 @@ import {
   union,
   type Board,
   type ArrowPath,
+  type CharStrokes,
+  type FigureSpec,
   type StructureOp,
   type BoardElement,
   type Bounds,
@@ -26,6 +32,7 @@ import {
   type Region,
 } from '@ai-tutor/board';
 import { SHAPE_FONT, sanitizeSvg, wrapLines, type BoardView, type DomContent } from '@ai-tutor/board/view';
+import { apiFetch } from '../api';
 import type { ToolDefinition } from './realtime';
 
 const placement = {
@@ -103,6 +110,47 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     type: 'function',
+    name: 'draw_geometry',
+    description:
+      'Draw a precise geometric figure; the app computes where every mark goes, so angle arcs sit inside their angle with the label on the bisector, side labels sit outside their edge, point labels sit away from the figure. ALWAYS use this (not draw_sketch) for triangles, polygons, circles, angles, altitudes, proofs and constructions. ' +
+      'Coordinates are math coordinates (y up, any scale). Angles are given by vertex and the two points on its rays: {at:"B", from:"A", to:"C", label:"θ"} (right:true for a right-angle square). Constructed points: triangle_sss (from three side lengths), feet (foot of a perpendicular, for altitudes), midpoints. Parts have ids like seg-AB, angle-B, side-AB, point-A for annotate/update_item(geometry).',
+    parameters: obj(
+      {
+        points: { type: 'array', items: obj({ name: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } }, ['name', 'x', 'y']) },
+        triangle_sss: obj({ names: { type: 'array', items: { type: 'string' } }, sides: { type: 'array', items: { type: 'number' }, description: '[a, b, c] with a = BC, b = CA, c = AB' } }, ['names', 'sides']),
+        feet: { type: 'array', items: obj({ name: { type: 'string' }, from: { type: 'string' }, to: { type: 'array', items: { type: 'string' } } }, ['name', 'from', 'to']) },
+        midpoints: { type: 'array', items: obj({ name: { type: 'string' }, of: { type: 'array', items: { type: 'string' } } }, ['name', 'of']) },
+        segments: { type: 'array', items: { type: 'string' }, description: 'Like "AB"' },
+        polygons: { type: 'array', items: { type: 'string' }, description: 'Filled shapes like "ABC"' },
+        angles: { type: 'array', items: obj({ at: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' }, right: { type: 'boolean' } }, ['at', 'from', 'to']) },
+        sides: { type: 'array', items: obj({ from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' } }, ['from', 'to', 'label']) },
+        ticks: { type: 'array', items: obj({ from: { type: 'string' }, to: { type: 'string' }, count: { type: 'number' } }, ['from', 'to']), description: 'Equal-length marks' },
+        circles: { type: 'array', items: obj({ center: { type: 'string' }, radius: { type: 'number' }, through: { type: 'string' } }, ['center']) },
+        title: { type: 'string' },
+        width: { type: 'number' },
+        placement,
+      },
+      [],
+    ),
+  },
+  {
+    type: 'function',
+    name: 'show_stroke_order',
+    description:
+      'Show how to write kanji, hiragana or katakana using real stroke-order data (never draw these yourself). Strokes appear one at a time in the correct order and direction, numbered, on a practice grid with a faint guide; the newest strokes are red. ' +
+      'Use reveal to go gradually: e.g. reveal 3 shows the first 3 strokes; then update_item(id, reveal: 6) adds the next ones while you explain them. The result lists every stroke with its type (horizontal, vertical, left-falling sweep, dot...) so you can describe each one correctly.',
+    parameters: obj(
+      {
+        text: { type: 'string', description: '1-6 kanji/kana, e.g. "新"' },
+        reveal: { type: 'number', description: 'How many strokes to show now (default: all)' },
+        title: { type: 'string' },
+        placement,
+      },
+      ['text'],
+    ),
+  },
+  {
+    type: 'function',
     name: 'draw_structure',
     description:
       'Draw a data structure that you will then change step by step with structure_op, so the student SEES each operation happen (items slide in and out, pointers move). kinds: "queue" (front on the left, rear on the right), "stack" (bottom to top), "array" (with indexes), "linkedlist" (nodes with next arrows). Use it whenever you teach how a data structure or algorithm works, instead of writing its states as text.',
@@ -144,6 +192,8 @@ export const TOOLS: ToolDefinition[] = [
         text: { type: 'string', description: 'New text (text item)' },
         state: { type: 'string', enum: ['active', 'done', 'error', 'normal'] },
         svg: { type: 'string', description: 'For sketches: the full new SVG. Keep the ids of parts that stay; new parts are drawn in, missing ones disappear.' },
+        geometry: { type: 'object', description: 'For draw_geometry figures: the full new figure spec (same fields as draw_geometry). New parts are drawn in.' },
+        reveal: { type: 'number', description: 'For stroke-order drawings: total number of strokes to show' },
       },
       ['id'],
     ),
@@ -265,7 +315,7 @@ export type ToolResult = { ok: true; [key: string]: unknown } | { ok: false; err
 type NewElement = Omit<BoardElement, 'id' | 'bounds' | 'createdAt' | 'updatedAt' | 'author'>;
 
 /** Executes one AI tool call against the board. */
-export function executeTool(board: Board, view: BoardView, name: string, args: Args): ToolResult {
+export function executeTool(board: Board, view: BoardView, name: string, args: Args): ToolResult | Promise<ToolResult> {
   const now = Date.now();
   const meta = { author: 'ai' as const, createdAt: now, updatedAt: now };
 
@@ -453,6 +503,25 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       return { ok: true, id: ref(el), parts: res.parts };
     }
 
+    case 'draw_geometry': {
+      const spec = geometrySpec(args);
+      const built = buildFigure(spec);
+      if (!built.svg) return { ok: false, error: built.warnings.join('; ') };
+      const prefix = `geo${Math.random().toString(36).slice(2, 8)}-`;
+      const res = sanitizeSvg(built.svg, prefix);
+      if ('error' in res) return { ok: false, error: res.error };
+      const width = Math.min(700, Math.max(240, num(args.width, Math.min(460, res.vw))));
+      const title = str(args.title) || undefined;
+      const el = place(
+        { type: 'sketch', content: { svg: res.svg, vw: res.vw, vh: res.vh, prefix, parts: res.parts, title, kind: 'geometry', source: spec } },
+        { width, height: Math.round((width * res.vh) / res.vw) + (title ? 26 : 0) },
+      );
+      return { ok: true, id: ref(el), parts: res.parts, ...(built.warnings.length ? { warnings: built.warnings } : {}) };
+    }
+
+    case 'show_stroke_order':
+      return showStrokeOrder();
+
     case 'draw_structure': {
       const kind = (['queue', 'stack', 'array', 'linkedlist'] as const).find((k) => k === args.kind) ?? 'array';
       const content = createStructure(kind, arr(args.items).map(str).slice(0, 16), COLORS.aiInk, str(args.title) || undefined);
@@ -480,6 +549,28 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       if (!el) return { ok: false, error: `Unknown item ${args.id}` };
       if (el.author !== 'ai') return { ok: false, error: "That's the student's work; annotate it instead of changing it" };
       const color = STATE_COLORS[str(args.state)];
+      if (el.type === 'sketch' && el.content.kind === 'strokes') {
+        const chars = el.content.source as CharStrokes[];
+        const total = totalStrokes(chars);
+        const prev = el.content.shownStrokes ?? total;
+        const shown = Math.min(total, Math.max(1, Math.round(num(args.reveal, total))));
+        const built = buildStrokeSvg(chars, shown, Math.min(prev, shown - 1));
+        const res = sanitizeSvg(built.svg, el.content.prefix);
+        if ('error' in res) return { ok: false, error: res.error };
+        board.update(el.id, { content: { ...el.content, svg: res.svg, parts: res.parts, shownStrokes: shown } }, 'ai');
+        return { ok: true, shown, total, ...(shown > prev ? { now_drawing: strokeList(chars).slice(prev, shown) } : {}) };
+      }
+      if (el.type === 'sketch' && el.content.kind === 'geometry') {
+        if (!args.geometry || typeof args.geometry !== 'object') return { ok: false, error: 'Send the full new figure as geometry: {...}' };
+        const spec = geometrySpec(args.geometry as Args);
+        const built = buildFigure(spec);
+        if (!built.svg) return { ok: false, error: built.warnings.join('; ') };
+        const res = sanitizeSvg(built.svg, el.content.prefix);
+        if ('error' in res) return { ok: false, error: res.error };
+        const height = Math.round((el.bounds.width * res.vh) / res.vw) + (el.content.title ? 26 : 0);
+        board.update(el.id, { content: { ...el.content, svg: res.svg, vw: res.vw, vh: res.vh, parts: res.parts, source: spec }, bounds: { ...el.bounds, height } }, 'ai');
+        return { ok: true, parts: res.parts, ...(built.warnings.length ? { warnings: built.warnings } : {}) };
+      }
       if (el.type === 'sketch') {
         if (!str(args.svg)) return { ok: false, error: 'Send the full new svg to change a sketch' };
         const res = sanitizeSvg(str(args.svg), el.content.prefix);
@@ -545,6 +636,28 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       return { ok: false, error: `Unknown tool ${name}` };
   }
 
+  async function showStrokeOrder(): Promise<ToolResult> {
+    const text = str(args.text).trim();
+    if (!text) return { ok: false, error: 'text is required' };
+    const res = await apiFetch(`/api/strokes/${encodeURIComponent(text)}`);
+    const body = (await res.json().catch(() => ({}))) as { chars?: CharStrokes[]; credit?: string; error?: string };
+    if (!res.ok || !body.chars) return { ok: false, error: body.error ?? `Stroke data unavailable (${res.status})` };
+    const chars = body.chars;
+    const total = totalStrokes(chars);
+    const shown = Math.min(total, Math.max(1, Math.round(num(args.reveal, total))));
+    const prefix = `ko${Math.random().toString(36).slice(2, 8)}-`;
+    const built = buildStrokeSvg(chars, shown, 0);
+    const clean = sanitizeSvg(built.svg, prefix);
+    if ('error' in clean) return { ok: false, error: clean.error };
+    const title = str(args.title) || undefined;
+    const width = Math.min(640, 230 * chars.length + 14 * (chars.length - 1));
+    const el = place(
+      { type: 'sketch', content: { svg: clean.svg, vw: clean.vw, vh: clean.vh, prefix, parts: clean.parts, title, kind: 'strokes', source: chars, credit: body.credit, shownStrokes: shown } },
+      { width, height: Math.round((width * clean.vh) / clean.vw) + (title ? 26 : 0) + 20 },
+    );
+    return { ok: true, id: ref(el), shown, total, strokes: strokeList(chars) };
+  }
+
   function addArrow(path: ArrowPath, label?: string): BoardElement {
     return addAt({ type: 'arrow', content: { ...path, color: COLORS.aiInk, label } }, arrowBounds(path));
   }
@@ -578,4 +691,30 @@ function previousStepRow(board: Board): { mathX: number; noteX: number } | null 
   if (!math) return null;
   const note = last !== math && last && last.bounds.x > math.bounds.x + math.bounds.width ? last : null;
   return { mathX: math.bounds.x, noteX: note ? note.bounds.x : math.bounds.x + math.bounds.width + 32 };
+}
+
+/** The figure fields of a draw_geometry call, loosely validated (the builder reports anything unusable). */
+function geometrySpec(a: Record<string, unknown>): FigureSpec {
+  const list = <T,>(v: unknown) => (Array.isArray(v) ? (v as T[]) : undefined);
+  const sss = a.triangle_sss as { names?: unknown; sides?: unknown } | undefined;
+  return {
+    points: list<{ name: string; x: unknown; y: unknown }>(a.points)?.map((p) => ({ name: String(p.name), x: Number(p.x), y: Number(p.y) })),
+    triangle_sss:
+      sss && Array.isArray(sss.names) && Array.isArray(sss.sides) && sss.names.length === 3 && sss.sides.length === 3
+        ? { names: sss.names.map(String) as [string, string, string], sides: sss.sides.map(Number) as [number, number, number] }
+        : undefined,
+    feet: list(a.feet),
+    midpoints: list(a.midpoints),
+    segments: list(a.segments),
+    polygons: list(a.polygons),
+    angles: list(a.angles),
+    sides: list(a.sides),
+    ticks: list(a.ticks),
+    circles: list(a.circles),
+  };
+}
+
+/** "新 stroke 1: dot" etc., numbered across characters, for the tutor's narration. */
+function strokeList(chars: CharStrokes[]): string[] {
+  return chars.flatMap((c) => c.strokes.map((s, i) => `${c.char} stroke ${i + 1}: ${strokeTypeName(s.type)}`));
 }

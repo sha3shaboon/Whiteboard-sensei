@@ -83,6 +83,8 @@ export class RealtimeClient {
   private transcripts = new Map<string, string>();
   private handledCalls = new Set<string>();
   private pendingToolOutputs = false;
+  /** Tool calls still running (some fetch data); the next step waits for their results. */
+  private toolsInFlight = 0;
   // Flow: after each reply the tutor gets the turn back (once its voice has finished), until it
   // asks the student something or calls wait_for_student. Caps keep it from talking forever.
   private waitRequested = false;
@@ -299,7 +301,7 @@ export class RealtimeClient {
   }
 
   private tryContinue(force = false): void {
-    if (!this.continuePending || this.paused || this.userSpeaking || this.responseActive) return;
+    if (!this.continuePending || this.paused || this.userSpeaking || this.responseActive || this.toolsInFlight > 0) return;
     if (this.speaking && !force) return;
     this.cancelContinue();
     // A short, natural pause between steps (also a window for the student to jump in).
@@ -325,14 +327,18 @@ export class RealtimeClient {
     if (name === 'wait_for_student') this.waitRequested = true;
     if (this.handledCalls.has(callId)) return;
     this.handledCalls.add(callId);
+    this.pendingToolOutputs = true;
+    this.toolsInFlight++;
     let output: unknown;
     try {
       output = await this.h.onToolCall(name, JSON.parse(rawArgs || '{}'));
     } catch (err) {
       output = { ok: false, error: (err as Error).message };
+    } finally {
+      this.toolsInFlight--;
     }
     this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
-    this.pendingToolOutputs = true;
+    this.tryContinue();
   }
 
   private async handle(ev: ServerEvent): Promise<void> {

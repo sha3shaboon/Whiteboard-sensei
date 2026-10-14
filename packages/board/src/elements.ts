@@ -78,7 +78,25 @@ export type GraphElement = ElementBase<
 >;
 export type StructureElement = ElementBase<'structure', import('./structure').StructureContent>;
 /** Free-form illustration: sanitized SVG drawn in stroke by stroke (see view/sketch.ts). */
-export type SketchElement = ElementBase<'sketch', { svg: string; vw: number; vh: number; prefix: string; parts: string[]; title?: string }>;
+export type SketchElement = ElementBase<
+  'sketch',
+  {
+    svg: string;
+    vw: number;
+    vh: number;
+    prefix: string;
+    parts: string[];
+    title?: string;
+    /** How it was made: free SVG, a computed geometry figure, or stroke-order data. */
+    kind?: 'svg' | 'geometry' | 'strokes';
+    /** Source data for regenerating (geometry spec / stroke data), kept so updates can rebuild it. */
+    source?: unknown;
+    /** Attribution shown under the drawing (e.g. stroke data license). */
+    credit?: string;
+    /** Stroke-order drawings: how many strokes are revealed. */
+    shownStrokes?: number;
+  }
+>;
 export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
 /** Clickable multiple-choice card. `selected` is set by the student. */
 export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;

@@ -68,10 +68,10 @@ export function App() {
           if (s === 'idle' || s === 'error') setSpeaking(false);
         },
         onTranscript: (id, role, text, final) => upsert({ id, role, text, final }),
-        onToolCall: (name, args) => {
+        onToolCall: async (name, args) => {
           const view = viewRef.current;
           if (!view) return { ok: false, error: 'Board not ready' };
-          const result = executeTool(board, view, name, args);
+          const result = await executeTool(board, view, name, args);
           eventLine(`AI → board: ${name} ${JSON.stringify(args)} → ${JSON.stringify(result)}`);
           return result;
         },
@@ -141,7 +141,7 @@ export function App() {
     for (const [i, step] of DEMO.entries()) {
       if (step.say) upsert({ id: `demo-${i}`, role: 'assistant', text: step.say, final: true });
       const args = typeof step.args === 'function' ? step.args(results) : (step.args ?? {});
-      const result = step.tool ? executeTool(board, view, step.tool, args) : { ok: true as const };
+      const result = step.tool ? await executeTool(board, view, step.tool, args) : { ok: true as const };
       if (step.tool) eventLine(`AI → board: ${step.tool} → ${JSON.stringify(result)}`);
       results.push(result);
       // Roughly the time it takes to say the line.

@@ -15,6 +15,8 @@ const ATTRS = new Set([
   'opacity', 'transform', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'dominant-baseline', 'letter-spacing',
   'marker-end', 'marker-start', 'marker-mid', 'viewbox', 'refx', 'refy', 'markerwidth', 'markerheight', 'orient', 'markerunits',
   'offset', 'stop-color', 'stop-opacity', 'gradientunits', 'gradienttransform',
+  // internal: parts shown instantly rather than drawn in (grids, guides)
+  'data-static',
 ]);
 
 const DRAWABLE = new Set(['path', 'line', 'polyline', 'polygon', 'circle', 'ellipse', 'rect']);
@@ -147,10 +149,12 @@ export function animateSketch(node: HTMLElement, existing: Set<string> = new Set
   const parts = [...svg.querySelectorAll('path, line, polyline, polygon, circle, ellipse, rect, text')].filter(
     (el) => {
       const parent = el.parentNode as Element | null;
-      return !el.closest('defs') && !existing.has(partKey(el)) && !(parent && parent !== svg && existing.has(partKey(parent)));
+      return !el.closest('defs') && !el.closest('[data-static]') && !existing.has(partKey(el)) && !(parent && parent !== svg && existing.has(partKey(parent)));
     },
   );
-  const stagger = Math.min(180, 3000 / Math.max(parts.length, 1));
+  // Stroke-order drawings go one stroke at a time, slowly enough to follow.
+  const strokeOrder = !!svg.querySelector('[data-static]');
+  const stagger = strokeOrder ? 650 : Math.min(180, 3000 / Math.max(parts.length, 1));
   parts.forEach((el, i) => {
     const delay = i * stagger;
     const e = el as SVGGeometryElement;
@@ -162,7 +166,7 @@ export function animateSketch(node: HTMLElement, existing: Set<string> = new Set
         len = 0;
       }
       if (len > 0) {
-        const duration = Math.min(900, Math.max(250, len * 1.6));
+        const duration = strokeOrder ? 550 : Math.min(900, Math.max(250, len * 1.6));
         e.style.strokeDasharray = `${len}`;
         const a = e.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration, delay, easing: 'ease-in-out', fill: 'backwards' });
         a.onfinish = () => e.style.removeProperty('stroke-dasharray');

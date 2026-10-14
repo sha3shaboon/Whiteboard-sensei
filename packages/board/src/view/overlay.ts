@@ -70,7 +70,10 @@ export function renderDomContent(node: HTMLElement, el: DomContent): void {
     case 'sketch': {
       const c = el.content;
       // Markup was sanitized when the AI created it (sanitizeSvg); titles are escaped here.
-      node.innerHTML = (c.title ? `<div style="font:600 15px system-ui,sans-serif;color:#2563eb;margin-bottom:4px">${escapeHtml(c.title)}</div>` : '') + c.svg;
+      node.innerHTML =
+        (c.title ? `<div style="font:600 15px system-ui,sans-serif;color:#2563eb;margin-bottom:4px">${escapeHtml(c.title)}</div>` : '') +
+        c.svg +
+        (c.credit ? `<div style="font:11px system-ui,sans-serif;color:#9a9a94;margin-top:4px">${escapeHtml(c.credit)}</div>` : '');
       const svg = node.querySelector('svg');
       if (svg) Object.assign(svg.style, { display: 'block', width: '100%', height: 'auto', overflow: 'visible' });
       Object.assign(node.style, { padding: '0' });

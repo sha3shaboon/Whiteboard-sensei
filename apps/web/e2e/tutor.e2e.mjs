@@ -35,6 +35,7 @@ await p.addInitScript(() => {
       }
       if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'LONG') this.nextLong = true;
       if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'WAIT') this.nextWait = true;
+      if (ev.type === 'conversation.item.create' && ev.item.content?.[0]?.text === 'SHOW') this.nextShow = true;
       if (ev.type !== 'response.create') return;
       if (ev.response?.tool_choice === 'required' && window.__rejectRequired) {
         // Simulates an API that doesn't accept a forced tool on response.create.
@@ -50,6 +51,13 @@ await p.addInitScript(() => {
         this.server({ type: 'response.created', response: { id: 'long' } });
         this.server({ type: 'output_audio_buffer.started' });
         this.server({ type: 'response.output_audio_transcript.delta', item_id: 'long', delta: 'This is a long explanation…' });
+        return;
+      }
+      if (this.nextShow) {
+        this.nextShow = false;
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call5', name: 'draw_geometry', arguments: JSON.stringify({ points: [{ name: 'A', x: 0, y: 0 }, { name: 'B', x: 5, y: 0 }, { name: 'C', x: 1, y: 3 }], polygons: ['ABC'], angles: [{ at: 'B', from: 'A', to: 'C', label: 'θ' }], placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call6', name: 'show_stroke_order', arguments: JSON.stringify({ text: '二', reveal: 1, placement: 'new section' }) });
+        this.server({ type: 'response.done', response: { id: rid, output: [] } });
         return;
       }
       if (this.nextWait) {
@@ -94,6 +102,7 @@ await p.addInitScript(() => {
 await p.route('**/api/realtime/session', (r) => r.fulfill({ json: { value: 'ek_test', expires_at: 0 } }));
 await p.route('https://api.openai.com/v1/realtime/calls', (r) => r.fulfill({ body: 'fake-answer', contentType: 'application/sdp' }));
 await p.route('**/api/recognize', (r) => r.fulfill({ json: { text: '3x = 12', ms: 300 } }));
+await p.route('**/api/strokes/**', (r) => r.fulfill({ json: { credit: 'Stroke order data: KanjiVG (CC BY-SA 3.0)', chars: [{ char: '二', strokes: [{ d: 'M28 30c3 0 6 0 9 0', type: '㇐' }, { d: 'M14 79c4 1 8 1 12 0', type: '㇐' }], numbers: [{ x: 22, y: 30 }, { x: 8, y: 79 }] }] } }));
 
 await p.goto(BASE + '/');
 await p.getByRole('button', { name: 'Start session' }).click();
@@ -151,6 +160,9 @@ await p.getByRole('button', { name: 'Check my work' }).click();
 await p.waitForTimeout(500);
 await p.screenshot({ path: S + '/3-e2e.png' });
 
+await p.getByPlaceholder('Type a message…').fill('SHOW');
+await p.keyboard.press('Enter');
+await p.waitForTimeout(1500);
 const sent = await p.evaluate(() => window.__sent);
 const window_stoppedAt = await p.evaluate(() => window.__stoppedAt);
 const texts = sent.filter((e) => e.type === 'conversation.item.create').map((e) => e.item.type === 'message' ? e.item.content.map((c) => c.text ?? '[image]').join(' ') : 'TOOL_OUTPUT ' + e.item.output);
@@ -197,6 +209,12 @@ check('sketch rendered, sanitized and namespaced', await p.evaluate(() => {
 }));
 check('wait_for_student stops the flow', afterWait.filter((t) => t === 'response.create').length === 1);
 check('session.update includes structure tools', ['draw_structure', 'structure_op', 'update_item', 'wait_for_student'].every((n) => sent[0].session.tools.some((t) => t.name === n)));
+check('geometry figure drawn with a computed angle mark', await p.evaluate(() => !!document.querySelector('.board-sketch [data-k="angle-B"]') && !!document.querySelector('.board-sketch [data-k="angle-label-B"]')));
+check('stroke order shows real strokes, revealed gradually, with credit', await p.evaluate(() => {
+  const el = [...document.querySelectorAll('.board-sketch')].find((n) => n.textContent.includes('KanjiVG'));
+  return !!el && !!el.querySelector('[data-k="c0s1"]') && !el.querySelector('[data-k="c0s2"]');
+}));
+check('stroke order result lists stroke types for narration', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('二 stroke 1: horizontal')));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

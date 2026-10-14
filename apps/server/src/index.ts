@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
 import { createClaudeRecognizer } from './recognize.js';
+import { createStrokeLoader } from './strokes.js';
 
 const env = process.env;
 
@@ -24,7 +25,7 @@ if (!recognizer) console.warn('ANTHROPIC_API_KEY not set: handwriting goes to th
 const accessCodes = (env.ACCESS_CODES ?? '').split(',').filter((c) => c.trim());
 if (!accessCodes.length) console.warn('ACCESS_CODES not set: anyone who can reach this server can start paid voice sessions');
 
-const app = createApp({ realtime, recognizer, accessCodes });
+const app = createApp({ realtime, recognizer, accessCodes, strokes: createStrokeLoader() });
 
 // Production: serve the built web app from the same origin (single service to deploy).
 const staticDir = env.STATIC_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
