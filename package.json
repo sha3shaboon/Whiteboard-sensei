@@ -1,0 +1,20 @@
+{
+  "name": "ai-tutor",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ai-tutor/web --filter @ai-tutor/server dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "spike:pen": "pnpm --filter @ai-tutor/spike-pen-input dev",
+    "spike:realtime": "pnpm --filter @ai-tutor/spike-realtime dev",
+    "spike:handwriting": "pnpm --filter @ai-tutor/spike-handwriting start"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4"
+  }
+}

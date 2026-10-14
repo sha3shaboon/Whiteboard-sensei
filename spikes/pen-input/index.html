@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>Pen input spike</title>
+    <style>
+      html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #fff; color: #1c1c1a; }
+      body { display: flex; flex-direction: column; overscroll-behavior: none; }
+      #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; font-size: 13px; }
+      #stats { font-family: ui-monospace, monospace; white-space: pre; font-size: 12px; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+      canvas { flex: 1; touch-action: none; display: block; width: 100%; -webkit-user-select: none; user-select: none; }
+      button { font: inherit; padding: 4px 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <label><input type="checkbox" id="palm" checked /> Palm rejection (ignore touch while a pen is in use)</label>
+      <button id="clear">Clear</button>
+      <button id="save">Save sample…</button>
+      <button id="labels">Download labels.json</button>
+      <span id="count"></span>
+    </div>
+    <div id="stats">Draw with a pen, finger or mouse.</div>
+    <canvas id="canvas"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

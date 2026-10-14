@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Realtime voice spike</title>
+    <style>
+      body { margin: 0; padding: 16px; font-family: system-ui, sans-serif; max-width: 900px; }
+      .row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+      button, input { font: inherit; padding: 6px 10px; }
+      input { flex: 1; min-width: 200px; }
+      #metrics { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre; background: #f4f4f2; padding: 10px; border-radius: 6px; }
+      #board { min-height: 40px; border: 1px dashed #bbb; padding: 8px; margin: 12px 0; border-radius: 6px; }
+      #board div { font-family: ui-monospace, monospace; }
+      #log { font-family: ui-monospace, monospace; font-size: 12px; height: 320px; overflow-y: auto; border: 1px solid #ddd; padding: 8px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <h3>Realtime voice spike</h3>
+    <div class="row">
+      <button id="connect">Connect (mic)</button>
+      <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    <div class="row">
+      <input id="text" placeholder="Type a message (same session as voice)" disabled />
+      <button id="send" disabled>Send</button>
+    </div>
+    <div id="metrics">Not connected.</div>
+    <div id="board"><em>write_math tool calls appear here</em></div>
+    <div id="log"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
