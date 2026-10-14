@@ -1,4 +1,4 @@
-import type { Tool } from '@ai-tutor/board/view';
+import type { Theme, Tool } from '@ai-tutor/board/view';
 import { Icon } from './Icon';
 
 const TOOLS: { tool: Tool; label: string; key: string }[] = [
@@ -23,9 +23,11 @@ interface Props {
   onRedo(): void;
   canUndo: boolean;
   canRedo: boolean;
+  theme: Theme;
+  onTheme(): void;
 }
 
-export function Toolbar({ tool, onTool, onUndo, onRedo, canUndo, canRedo }: Props) {
+export function Toolbar({ tool, onTool, onUndo, onRedo, canUndo, canRedo, theme, onTheme }: Props) {
   return (
     <div className="toolbar" role="toolbar" aria-label="Whiteboard tools">
       {TOOLS.map((t) => (
@@ -46,6 +48,10 @@ export function Toolbar({ tool, onTool, onUndo, onRedo, canUndo, canRedo }: Prop
       </button>
       <button className="tool" onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
         <Icon name="redo" />
+      </button>
+      <span className="divider" />
+      <button className="tool" onClick={onTheme} title={theme === 'dark' ? 'Light board' : 'Dark board'} aria-label={theme === 'dark' ? 'Switch to a light board' : 'Switch to a dark board'}>
+        <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
       </button>
     </div>
   );

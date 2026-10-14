@@ -58,17 +58,19 @@ describe('image search', () => {
 
   it("puts the Wikipedia article's lead picture first, only if it is a free file on Commons", async () => {
     const stromboli = commons.query.pages.find((p: { title: string }) => p.title === 'File:Stromboli Eruption.jpg');
-    const run = async (onCommons: boolean) => {
+    const run = async (onCommons: boolean, query = 'Stromboli') => {
       const fetchMock = vi.fn(async (url: string) => {
         if (url.startsWith('https://en.wikipedia.org')) return Response.json({ query: { pages: [{ title: 'Stromboli', pageimage: 'Stromboli_Eruption.jpg' }] } });
         if (url.includes('titles=File')) return Response.json({ query: { pages: onCommons ? [stromboli] : [{ title: 'File:Stromboli Eruption.jpg', missing: true }] } });
         if (url.startsWith('https://commons.wikimedia.org')) return Response.json({ query: { pages: commons.query.pages.filter((p: { title: string }) => p.title !== 'File:Stromboli Eruption.jpg') } });
         return new Response('no', { status: 500 });
       });
-      return createImageSearch(fetchMock as unknown as typeof fetch)('Stromboli');
+      return createImageSearch(fetchMock as unknown as typeof fetch)(query);
     };
     expect((await run(true)).map((r) => r.title)).toEqual(['Stromboli Eruption', 'Volcano diagram']);
     // A non-free file hosted only on Wikipedia (fair use) is not on Commons, so it's skipped.
     expect((await run(false)).map((r) => r.title)).toEqual(['Volcano diagram']);
+    // A query about one aspect of the article ("... diagram") doesn't get the article picture first.
+    expect((await run(true, 'Stromboli volcano diagram'))[0]!.title).toBe('Volcano diagram');
   });
 });

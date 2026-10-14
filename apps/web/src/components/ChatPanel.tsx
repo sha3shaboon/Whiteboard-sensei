@@ -43,7 +43,7 @@ export function ChatPanel(p: Props) {
 
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && p.messages.length) el.scrollTop = el.scrollHeight;
   }, [p.messages]);
 
   const submit = () => {
@@ -62,7 +62,16 @@ export function ChatPanel(p: Props) {
         <div>
           <div className="chat-title">Tutor</div>
           <div className={`chat-status ${p.status}`}>
-            <span className={`dot ${p.speaking ? 'speaking' : ''}`} />
+            {connected ? (
+              <span className={`eq ${p.paused ? 'paused' : p.speaking ? 'speaking' : ''}`} aria-hidden="true">
+                <i />
+                <i />
+                <i />
+                <i />
+              </span>
+            ) : (
+              <span className="dot" />
+            )}
             {p.status === 'connected' ? (p.paused ? 'Paused' : p.speaking ? 'Speaking…' : 'Listening') : p.status === 'connecting' ? 'Connecting…' : p.status === 'error' ? 'Connection failed' : 'Not connected'}
           </div>
         </div>
@@ -92,8 +101,17 @@ export function ChatPanel(p: Props) {
       <div className="messages" ref={listRef}>
         {!connected && p.messages.length === 0 && (
           <div className="welcome">
-            <h2>Learn anything with an AI tutor</h2>
-            <p>Talk or type, and use the whiteboard together. The tutor will ask what you'd like to learn.</p>
+            <span className="eyebrow">Live AI tutor</span>
+            <h2>
+              Learn anything, <span>out loud</span>
+            </h2>
+            <p>Talk or type, and work on the whiteboard together. Your tutor will ask what you'd like to learn.</p>
+            <div className="features">
+              <span style={{ ['--c' as string]: '#8b5cf6' }}>Voice</span>
+              <span style={{ ['--c' as string]: '#3b82f6' }}>Shared whiteboard</span>
+              <span style={{ ['--c' as string]: '#2dd4bf' }}>Maps, molecules, charts</span>
+              <span style={{ ['--c' as string]: '#facc15' }}>Real pictures</span>
+            </div>
             {p.needsAccessCode ? (
               <form
                 className="code-form"
@@ -172,8 +190,8 @@ export function ChatPanel(p: Props) {
                 'List prices; voice transcription billed separately.',
               ].filter(Boolean).join('\n')}
             >
-              {p.minutes.toFixed(1)} min · ≈${cost.total.toFixed(2)}
-              {p.minutes >= 0.5 ? ` ($${(cost.total / p.minutes).toFixed(2)}/min)` : ''}
+              {p.minutes.toFixed(1)} min · <b>${cost.total.toFixed(2)}</b>
+              {p.minutes >= 0.5 ? ` · $${(cost.total / p.minutes).toFixed(2)}/min` : ''}
             </span>
           )}
         </footer>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Board } from '@ai-tutor/board';
-import { BoardView, type Tool } from '@ai-tutor/board/view';
+import { BoardView, type Theme, type Tool } from '@ai-tutor/board/view';
 import { getAccessCode, setAccessCode } from './api';
 import { ChatPanel, type ChatMessage } from './components/ChatPanel';
 import { Toolbar, TOOL_KEYS } from './components/Toolbar';
@@ -11,6 +11,14 @@ import { RealtimeClient, type Status, type Usage } from './tutor/realtime';
 import { executeTool, TOOLS, type ToolResult } from './tutor/tools';
 
 const demoAvailable = new URLSearchParams(location.search).has('demo');
+
+function savedTheme(): Theme {
+  try {
+    return localStorage.getItem('theme') === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
 
 export function App() {
   const board = useMemo(() => new Board(), []);
@@ -32,6 +40,17 @@ export function App() {
   const [showEvents, setShowEvents] = useState(demoAvailable);
   const [accessRequired, setAccessRequired] = useState(false);
   const [code, setCode] = useState(getAccessCode);
+  const [theme, setTheme] = useState<Theme>(savedTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    if (viewRef.current) viewRef.current.theme = theme;
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      /* private mode: just don't remember it */
+    }
+  }, [theme]);
 
   useEffect(() => {
     fetch('/api/health')
@@ -87,7 +106,9 @@ export function App() {
     const view = new BoardView(hostRef.current!, board, {
       onToolChange: setTool,
       onHistoryChange: () => setHistory({ canUndo: board.canUndo(), canRedo: board.canRedo() }),
+      topInset: 64, // the floating toolbar and brand
     });
+    view.theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
     viewRef.current = view;
     bridgeRef.current = new TutorBridge(board, view, client, (text) => eventLine(`Board → AI: ${text}`));
     return () => {
@@ -153,7 +174,14 @@ export function App() {
     <div className="layout">
       <main className="board-area">
         <div ref={hostRef} className="board-host" />
+        <div className="board-glow" aria-hidden="true" />
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true" />
+          <span className="brand-name">Whiteboard Sensei</span>
+        </div>
         <Toolbar
+          theme={theme}
+          onTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           tool={tool}
           onTool={(t) => viewRef.current && (viewRef.current.tool = t)}
           onUndo={() => board.undo()}

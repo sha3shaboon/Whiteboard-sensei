@@ -1,6 +1,7 @@
 // Interactive whiteboard: canvas for ink + DOM layer for text/math/code, a pan/zoom camera,
 // and the student tools. Framework-independent; the React app just mounts it.
 
+import { DARK_SURFACE, themeColor, themeContext, themeDom, type Theme } from './theme';
 import type { Board, BoardChange } from '../board';
 import { COLORS, type BoardElement, type Bounds, type ElementId, type Point, type StrokeElement, type StrokePoint } from '../elements';
 import { boundsOfPoints, elementAt, hitTest, union } from '../geometry';
@@ -34,6 +35,8 @@ const STUDENT_FONT = 20;
 export interface BoardViewOptions {
   onToolChange?: (tool: Tool) => void;
   onHistoryChange?: () => void;
+  /** Screen pixels at the top covered by floating UI (toolbar); auto-scrolling keeps content below it. */
+  topInset?: number;
 }
 
 export class BoardView {
@@ -62,6 +65,24 @@ export class BoardView {
   private raf = 0;
   private cleanup: (() => void)[] = [];
 
+  private _theme: Theme = 'light';
+
+  /** Light paper or dark board. Content keeps its light-theme colors; they are converted when drawn. */
+  get theme(): Theme {
+    return this._theme;
+  }
+
+  set theme(t: Theme) {
+    if (t === this._theme) return;
+    this._theme = t;
+    this.root.style.background = t === 'dark' ? DARK_SURFACE : '#fff';
+    this.root.dataset.theme = t;
+    // Re-render rich content in the new colors (without replaying draw-in animations).
+    for (const el of this.board.all()) this.syncDom(el, true);
+    this.updateGrid();
+    this.dirty = true;
+  }
+
   constructor(container: HTMLElement, private board: Board, private opts: BoardViewOptions = {}) {
     this.root = document.createElement('div');
     this.root.className = 'board-root';
@@ -76,6 +97,7 @@ export class BoardView {
     this.canvas = document.createElement('canvas');
     Object.assign(this.canvas.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' });
     this.ctx = this.canvas.getContext('2d')!;
+    themeContext(this.ctx, () => this._theme);
 
     const top = document.createElement('div');
     Object.assign(top.style, { position: 'absolute', inset: '0', overflow: 'hidden', pointerEvents: 'none' });
@@ -134,7 +156,8 @@ export class BoardView {
     const v = this.getViewport();
     let { x, y } = this.camera;
     if (b.x < v.x + margin || b.x + b.width > v.x + v.width - margin) x = b.x - margin;
-    if (b.y < v.y + margin || b.y + b.height > v.y + v.height - margin) y = Math.min(b.y - margin, b.y + b.height + margin - v.height);
+    const top = margin + (this.opts.topInset ?? 0) / this.camera.zoom;
+    if (b.y < v.y + top || b.y + b.height > v.y + v.height - margin) y = Math.min(b.y - top, b.y + b.height + margin - v.height);
     if (x !== this.camera.x || y !== this.camera.y) {
       this.camera = { ...this.camera, x, y };
       this.invalidate();
@@ -211,7 +234,7 @@ export class BoardView {
     return Math.max(0, p);
   }
 
-  private syncDom(el: BoardElement): void {
+  private syncDom(el: BoardElement, themeOnly = false): void {
     if (!isDomElement(el) && el.type !== 'answer') return;
     const interactive = el.type === 'choice' || el.type === 'answer';
     let node = this.domNodes.get(el.id);
@@ -228,18 +251,20 @@ export class BoardView {
       // Zero-size anchor at the box's bottom-right corner; the button hangs inside the box from it.
       node.innerHTML = `<button type="button" data-done style="position:absolute;right:8px;bottom:8px;white-space:nowrap;font:600 13px system-ui,sans-serif;padding:6px 12px;border-radius:999px;cursor:pointer;border:0;background:${done ? '#16a34a' : '#2563eb'};color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15)">${done ? 'Submit again' : 'Done ✓'}</button>`;
       Object.assign(node.style, { position: 'absolute', left: `${el.bounds.x + el.bounds.width}px`, top: `${el.bounds.y + el.bounds.height}px`, width: '0', height: '0', pointerEvents: 'auto' });
+      themeDom(node, this._theme);
       return;
     }
     // Sketches draw in stroke by stroke; on an update only their new parts are drawn.
     const previous = el.type === 'sketch' && node.dataset.svg ? sketchKeys(node) : null;
     const sketchChanged = el.type === 'sketch' && node.dataset.svg !== el.content.svg;
     renderDomContent(node, el);
+    themeDom(node, this._theme);
     node.dataset.kind = el.type;
     Object.assign(node.style, { left: `${el.bounds.x}px`, top: `${el.bounds.y}px`, width: `${el.bounds.width}px`, minHeight: `${el.bounds.height}px`, transform: '' });
     if (interactive) node.style.pointerEvents = 'auto';
     if (el.type === 'sketch' && sketchChanged) {
       node.dataset.svg = el.content.svg;
-      if (el.author === 'ai') animateSketch(node, previous ?? undefined);
+      if (el.author === 'ai' && !themeOnly) animateSketch(node, previous ?? undefined);
     }
   }
 
@@ -343,7 +368,7 @@ export class BoardView {
   private updateGrid(): void {
     const step = 32 * this.camera.zoom;
     const s = this.root.style;
-    s.backgroundImage = this.camera.zoom < 0.35 ? 'none' : 'radial-gradient(circle, #dcdcd6 1.2px, transparent 1.4px)';
+    s.backgroundImage = this.camera.zoom < 0.35 ? 'none' : `radial-gradient(circle, ${this._theme === 'dark' ? 'rgba(148, 163, 255, 0.16)' : '#dcdcd6'} 1.2px, transparent 1.4px)`;
     s.backgroundSize = `${step}px ${step}px`;
     s.backgroundPosition = `${-this.camera.x * this.camera.zoom - step / 2}px ${-this.camera.y * this.camera.zoom - step / 2}px`;
   }
@@ -597,7 +622,8 @@ export class BoardView {
       padding: `${2 * z}px ${4 * z}px`,
       border: '1px dashed #2563eb',
       outline: 'none',
-      background: 'rgba(255,255,255,0.9)',
+      background: themeColor('rgba(255,255,255,0.9)', this._theme),
+      color: themeColor('#1c1c1a', this._theme),
       resize: 'both',
       zIndex: '2',
     });

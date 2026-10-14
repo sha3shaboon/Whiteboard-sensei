@@ -17,6 +17,8 @@ export interface ImageResult {
   license: string;
   licenseUrl?: string;
   provider: string;
+  /** For a Wikipedia lead picture: the article it illustrates. */
+  article?: string;
 }
 
 export type ImageSearch = (query: string) => Promise<ImageResult[]>;
@@ -181,7 +183,7 @@ export function createImageSearch(fetchImpl: typeof fetch = fetch): ImageSearch 
     const page = body.query?.pages?.[0];
     if (!page?.pageimage) return [];
     const found = await commonsInfo({ titles: `File:${page.pageimage}` });
-    return found.map((r) => ({ ...r, description: r.description || page.title }));
+    return found.map((r) => ({ ...r, description: r.description || page.title, article: page.title }));
   };
 
   const commons = async (q: string) => {
@@ -189,8 +191,13 @@ export function createImageSearch(fetchImpl: typeof fetch = fetch): ImageSearch 
       wikipediaLead(q).catch(() => [] as ImageResult[]),
       commonsInfo({ generator: 'search', gsrsearch: `${q} filetype:bitmap|drawing`, gsrnamespace: '6', gsrlimit: '10' }),
     ]);
-    const seen = new Set(lead.map((r) => r.id));
-    return [...lead, ...rerank(searched.filter((r) => !seen.has(r.id)), q)];
+    // The article picture leads only when the article is exactly what was asked for ("Mount Fuji"),
+    // not when the query asks for a particular aspect of it ("Coffea arabica fruits").
+    const pick = lead[0];
+    const qWords = words(q);
+    const exact = !!pick && qWords.every((w) => words(pick.article ?? '').includes(w));
+    if (exact) return [pick, ...rerank(searched.filter((r) => r.id !== pick.id), q)];
+    return rerank([...searched, ...lead.filter((r) => !searched.some((s) => s.id === r.id))], q);
   };
 
   const openverse = async (q: string) => {
