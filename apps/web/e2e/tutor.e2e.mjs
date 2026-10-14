@@ -41,6 +41,8 @@ await p.addInitScript(() => {
   window.RTCPeerConnection = class {
     ontrack = null;
     createDataChannel() { return (this.dc = new FakeChannel()); }
+    connectionState = 'new';
+    addEventListener() {}
     addTrack() {} addTransceiver() {}
     async createOffer() { return { type: 'offer', sdp: 'fake-offer' }; }
     async setLocalDescription() {}

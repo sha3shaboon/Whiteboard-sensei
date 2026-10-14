@@ -33,6 +33,26 @@ type ServerEvent = { type: string; [key: string]: any };
 
 class AccessCodeError extends Error {}
 
+const CONNECT_TIMEOUT_MS = 20_000;
+const LINK_FAILED =
+  "Couldn't open the audio connection to the tutor. Your network may block voice calls (WebRTC); try another network or turn off a VPN.";
+
+/** Sends the WebRTC offer; retries OpenAI's occasional 5xx errors up to twice. */
+async function postOffer(key: string, sdp: string): Promise<Response> {
+  let res!: Response;
+  for (const delay of [0, 600, 1800]) {
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    res = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST',
+      body: sdp,
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/sdp' },
+    });
+    if (res.status < 500) return res;
+    console.warn(`Realtime connect returned ${res.status}, retrying`);
+  }
+  return res;
+}
+
 /** Turns an OpenAI error response into a message a student (or the site owner) can act on. */
 async function describeOpenAIError(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: { code?: string; type?: string; message?: string } } | null;
@@ -42,6 +62,7 @@ async function describeOpenAIError(res: Response): Promise<string> {
   }
   if (res.status === 401) return "The tutor is unavailable: the voice session key was rejected. Try again; if it keeps failing, the site's OpenAI key needs checking.";
   if (res.status === 429) return 'The tutor is busy right now (rate limited). Please try again in a minute.';
+  if (res.status >= 500) return 'OpenAI\'s voice service had a temporary problem. Please press Start again in a moment.';
   return `Couldn't connect to the voice tutor (${res.status})${e?.message ? `: ${e.message}` : ''}`;
 }
 
@@ -87,27 +108,40 @@ export class RealtimeClient {
 
       const dc = (this.dc = pc.createDataChannel('oai-events'));
       dc.addEventListener('message', (e) => this.handle(JSON.parse(e.data)));
+      // If the audio link never opens (e.g. a network that blocks WebRTC), fail clearly instead of spinning forever.
+      const openTimer = setTimeout(() => this.fail(dc, LINK_FAILED), CONNECT_TIMEOUT_MS);
+      pc.addEventListener('connectionstatechange', () => {
+        if (pc.connectionState === 'failed') this.fail(dc, LINK_FAILED);
+      });
       dc.addEventListener('open', () => {
+        clearTimeout(openTimer);
         this.send({ type: 'session.update', session: { type: 'realtime', instructions: opts.instructions, tools: opts.tools, tool_choice: 'auto' } });
         this.h.onStatus('connected', this.mic ? undefined : 'Microphone unavailable: type to talk');
         opts.onOpen?.();
       });
       // Only report a drop of the live channel, not the close we trigger ourselves in disconnect().
-      dc.addEventListener('close', () => this.dc === dc && this.disconnect());
+      dc.addEventListener('close', () => {
+        clearTimeout(openTimer);
+        if (this.dc === dc) this.disconnect();
+      });
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
-        method: 'POST',
-        body: offer.sdp,
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/sdp' },
-      });
+      const sdpRes = await postOffer(key, offer.sdp ?? '');
       if (!sdpRes.ok) throw new Error(await describeOpenAIError(sdpRes));
+      if (this.dc !== dc) return; // disconnected while waiting
       await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
     } catch (err) {
       this.teardown();
       this.h.onStatus('error', err instanceof AccessCodeError ? 'access-code' : (err as Error).message);
     }
+  }
+
+  /** Ends a connection attempt with an error, if it's still the current one. */
+  private fail(dc: RTCDataChannel, message: string): void {
+    if (this.dc !== dc) return;
+    this.teardown();
+    this.h.onStatus('error', message);
   }
 
   disconnect(): void {
