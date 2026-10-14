@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node --env-file-if-exists=../../.env dist/index.js",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -17,5 +17,8 @@
   },
   "devDependencies": {
     "tsx": "^4.23.15"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

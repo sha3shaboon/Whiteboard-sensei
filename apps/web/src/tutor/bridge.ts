@@ -3,6 +3,7 @@
 
 import { StudentEventGrouper, boardSummary, describeContent, type Board, type Bounds, type StudentEvent } from '@ai-tutor/board';
 import type { BoardView } from '@ai-tutor/board/view';
+import { apiFetch } from '../api';
 
 export interface ContextSink {
   readonly connected: boolean;
@@ -16,7 +17,7 @@ const nearText = (near?: string) => (near ? `, near ${near}` : '');
 
 /** Recognizes handwriting via the server; null means "send the image to the voice model instead". */
 async function recognize(png: string): Promise<string | null> {
-  const res = await fetch('/api/recognize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image: png }) });
+  const res = await apiFetch('/api/recognize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image: png }) });
   if (res.status === 503) return null;
   if (!res.ok) return 'unreadable';
   return ((await res.json()) as { text: string }).text;

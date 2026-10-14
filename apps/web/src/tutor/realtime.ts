@@ -1,6 +1,8 @@
 // Thin adapter over the OpenAI Realtime API (WebRTC). The rest of the app talks to this class only,
 // so the provider can be swapped later. Voice, typed chat and board context share one session.
 
+import { apiFetch } from '../api';
+
 export type Status = 'idle' | 'connecting' | 'connected' | 'error';
 
 export interface ToolDefinition {
@@ -29,6 +31,8 @@ export interface RealtimeHandlers {
 
 type ServerEvent = { type: string; [key: string]: any };
 
+class AccessCodeError extends Error {}
+
 export class RealtimeClient {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
@@ -49,7 +53,8 @@ export class RealtimeClient {
   async connect(opts: { instructions: string; tools: ToolDefinition[]; onOpen?: () => void }): Promise<void> {
     this.h.onStatus('connecting');
     try {
-      const tokenRes = await fetch('/api/realtime/session', { method: 'POST' });
+      const tokenRes = await apiFetch('/api/realtime/session', { method: 'POST' });
+      if (tokenRes.status === 401) throw new AccessCodeError();
       if (!tokenRes.ok) throw new Error((await tokenRes.json().catch(() => null))?.error ?? `Server error ${tokenRes.status}`);
       const { value: key } = (await tokenRes.json()) as { value: string };
 
@@ -88,7 +93,7 @@ export class RealtimeClient {
       await pc.setRemoteDescription({ type: 'answer', sdp: await sdpRes.text() });
     } catch (err) {
       this.disconnect();
-      this.h.onStatus('error', (err as Error).message);
+      this.h.onStatus('error', err instanceof AccessCodeError ? 'access-code' : (err as Error).message);
     }
   }
 

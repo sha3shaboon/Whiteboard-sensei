@@ -33,6 +33,25 @@ Tick **Show board events** to see exactly what the AI is told about the board an
 - Tablet: run `pnpm dev`, then open the network URL Vite prints. The microphone needs HTTPS off
   localhost, so use an HTTPS tunnel (or type to the tutor) when testing on an iPad.
 
+## Deploy
+
+One service: the Node server serves the API and the built web app (`Dockerfile`).
+
+**Render (blueprint included):** Render dashboard → New → Blueprint → pick this repo. It reads
+`render.yaml`; enter `OPENAI_API_KEY`, `ACCESS_CODES` (e.g. `alpha-7f3k,beta-q9x2`) and optionally
+`ANTHROPIC_API_KEY` when prompted. Pushes to `main` redeploy automatically. Render serves HTTPS,
+so the microphone works on tablets too.
+
+**Anywhere else with Docker:**
+
+```bash
+docker build -t whiteboard-sensei .
+docker run -p 8080:8080 -e OPENAI_API_KEY=... -e ACCESS_CODES=... whiteboard-sensei
+```
+
+Always set `ACCESS_CODES` on a public URL: without it, anyone who finds the site can start voice
+sessions billed to your OpenAI account. Students enter the code once; the browser remembers it.
+
 ## Checks
 
 ```bash

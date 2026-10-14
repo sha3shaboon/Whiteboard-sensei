@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Board } from '@ai-tutor/board';
 import { BoardView, type Tool } from '@ai-tutor/board/view';
+import { getAccessCode, setAccessCode } from './api';
 import { ChatPanel, type ChatMessage } from './components/ChatPanel';
 import { Toolbar, TOOL_KEYS } from './components/Toolbar';
 import { TutorBridge } from './tutor/bridge';
@@ -28,6 +29,23 @@ export function App() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showEvents, setShowEvents] = useState(demoAvailable);
+  const [accessRequired, setAccessRequired] = useState(false);
+  const [code, setCode] = useState(getAccessCode);
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then((r) => r.json() as Promise<{ accessCodeRequired?: boolean }>)
+      .then((h) => setAccessRequired(!!h.accessCodeRequired))
+      .catch(() => {});
+  }, []);
+
+  // A rejected code is forgotten so the student can enter it again.
+  useEffect(() => {
+    if (status === 'error' && statusDetail === 'access-code') {
+      setAccessCode('');
+      setCode('');
+    }
+  }, [status, statusDetail]);
 
   const upsert = useCallback((m: ChatMessage) => {
     setMessages((list) => {
@@ -95,7 +113,11 @@ export function App() {
     return () => clearInterval(t);
   }, [status]);
 
-  const connect = () => {
+  const connect = (enteredCode?: string) => {
+    if (enteredCode !== undefined) {
+      setAccessCode(enteredCode);
+      setCode(enteredCode);
+    }
     setStartedAt(Date.now());
     setNow(Date.now());
     setUsage(null);
@@ -138,7 +160,8 @@ export function App() {
       </main>
       <ChatPanel
         status={status}
-        statusDetail={statusDetail}
+        statusDetail={statusDetail === 'access-code' ? 'That access code is not valid.' : statusDetail}
+        needsAccessCode={accessRequired && !code}
         messages={messages}
         micOn={micOn}
         hasMic={client.hasMic}

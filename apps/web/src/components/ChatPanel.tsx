@@ -20,8 +20,9 @@ interface Props {
   minutes: number;
   showEvents: boolean;
   demoAvailable: boolean;
+  needsAccessCode: boolean;
   onShowEvents(v: boolean): void;
-  onConnect(): void;
+  onConnect(accessCode?: string): void;
   onDisconnect(): void;
   onToggleMic(): void;
   onSend(text: string): void;
@@ -36,6 +37,7 @@ const AUDIO_OUT_PER_M = 64;
 
 export function ChatPanel(p: Props) {
   const [draft, setDraft] = useState('');
+  const [codeDraft, setCodeDraft] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const connected = p.status === 'connected';
 
@@ -83,9 +85,24 @@ export function ChatPanel(p: Props) {
           <div className="welcome">
             <h2>Learn anything with an AI tutor</h2>
             <p>Talk or type, and use the whiteboard together. The tutor will ask what you'd like to learn.</p>
-            <button className="primary" onClick={p.onConnect} disabled={p.status === 'connecting'}>
-              <Icon name="phone" /> {p.status === 'connecting' ? 'Connecting…' : 'Start session'}
-            </button>
+            {p.needsAccessCode ? (
+              <form
+                className="code-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (codeDraft.trim()) p.onConnect(codeDraft.trim());
+                }}
+              >
+                <input value={codeDraft} onChange={(e) => setCodeDraft(e.target.value)} placeholder="Trial access code" aria-label="Trial access code" autoComplete="off" />
+                <button className="primary" type="submit" disabled={!codeDraft.trim() || p.status === 'connecting'}>
+                  <Icon name="phone" /> Start
+                </button>
+              </form>
+            ) : (
+              <button className="primary" onClick={() => p.onConnect()} disabled={p.status === 'connecting'}>
+                <Icon name="phone" /> {p.status === 'connecting' ? 'Connecting…' : 'Start session'}
+              </button>
+            )}
             {p.status === 'error' && <p className="error">{p.statusDetail}</p>}
             {p.demoAvailable && (
               <button className="secondary" onClick={p.onDemo}>
@@ -103,7 +120,7 @@ export function ChatPanel(p: Props) {
         {!connected && p.messages.length > 0 && (
           <div className="session-ended">
             {p.status === 'error' && <p className="error">{p.statusDetail}</p>}
-            <button className="primary" onClick={p.onConnect} disabled={p.status === 'connecting'}>
+            <button className="primary" onClick={() => p.onConnect()} disabled={p.status === 'connecting' || p.needsAccessCode}>
               <Icon name="phone" /> {p.status === 'connecting' ? 'Connecting…' : 'Start a new session'}
             </button>
           </div>

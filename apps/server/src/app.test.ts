@@ -7,7 +7,18 @@ const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 }
 describe('server', () => {
   it('reports health', async () => {
     const res = await createApp({ realtime: null, recognizer: null }).request('/api/health');
-    expect(await res.json()).toEqual({ ok: true, realtimeConfigured: false, recognitionConfigured: false });
+    expect(await res.json()).toEqual({ ok: true, realtimeConfigured: false, recognitionConfigured: false, accessCodeRequired: false });
+  });
+
+  it('requires a valid access code on /api calls when codes are configured', async () => {
+    const recognizer = vi.fn(async () => 'x');
+    const app = createApp({ realtime: null, recognizer, accessCodes: ['alpha', 'beta'] });
+    const post = (code?: string) =>
+      app.request('/api/recognize', { method: 'POST', body: JSON.stringify({ image: 'a' }), headers: { 'content-type': 'application/json', ...(code ? { 'x-access-code': code } : {}) } });
+    expect((await post()).status).toBe(401);
+    expect((await post('nope')).status).toBe(401);
+    expect((await post('beta')).status).toBe(200);
+    expect(await (await app.request('/api/health')).json()).toMatchObject({ accessCodeRequired: true });
   });
 
   describe('POST /api/realtime/session', () => {

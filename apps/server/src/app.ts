@@ -5,13 +5,23 @@ import type { Recognizer } from './recognize.js';
 export interface AppDeps {
   realtime: RealtimeConfig | null;
   recognizer: Recognizer | null;
+  /** Trial access codes. When non-empty, every /api call except health needs one in `x-access-code`. */
+  accessCodes?: string[];
   fetchImpl?: typeof fetch;
 }
 
-export function createApp({ realtime, recognizer, fetchImpl = fetch }: AppDeps) {
+export function createApp({ realtime, recognizer, accessCodes = [], fetchImpl = fetch }: AppDeps) {
   const app = new Hono();
+  const codes = new Set(accessCodes.map((c) => c.trim()).filter(Boolean));
 
-  app.get('/api/health', (c) => c.json({ ok: true, realtimeConfigured: realtime !== null, recognitionConfigured: recognizer !== null }));
+  app.get('/api/health', (c) =>
+    c.json({ ok: true, realtimeConfigured: realtime !== null, recognitionConfigured: recognizer !== null, accessCodeRequired: codes.size > 0 }),
+  );
+
+  app.use('/api/*', async (c, next) => {
+    if (codes.size && !codes.has(c.req.header('x-access-code') ?? '')) return c.json({ error: 'A valid access code is required' }, 401);
+    await next();
+  });
 
   app.post('/api/realtime/session', async (c) => {
     if (!realtime) return c.json({ error: 'OPENAI_API_KEY is not set on the server' }, 503);

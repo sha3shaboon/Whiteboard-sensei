@@ -1,0 +1,19 @@
+# Render Blueprint: New > Blueprint > pick this repo. Fill in the secret env vars when prompted.
+services:
+  - type: web
+    name: whiteboard-sensei
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ACCESS_CODES
+        sync: false
+      - key: REALTIME_MODEL
+        value: gpt-realtime-2.1
+      - key: RECOGNIZE_MODEL
+        value: claude-haiku-5-5
