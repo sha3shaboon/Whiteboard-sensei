@@ -1,0 +1,1 @@
+Most AI tutors just talk. Whiteboard Sensei draws: real kanji stroke order, real map borders, real molecules from PubChem, and photos with their sources, sketched live on a shared whiteboard while it explains. Talk to it, interrupt it, ask anything: whiteboard-sensei.onrender.com

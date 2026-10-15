@@ -6,3 +6,5 @@ dist/
 .DS_Store
 spikes/handwriting/results/
 apps/web/e2e-results/
+# /brag intermediates (frames, captures, renders)
+brag-output/work/
