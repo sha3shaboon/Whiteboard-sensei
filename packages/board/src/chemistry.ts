@@ -265,11 +265,13 @@ export function buildPeriodicTable(spec: PeriodicTableSpec): { svg: string; vw: 
     );
   }
   let vw = X0 * 2 + 18 * (S + G);
-  const vh = Y0 + 9.5 * (S + G) + 20;
+  // The f-block rows end at about Y0 + 8.5 rows; the legend goes below them.
+  const legendY = Y0 + 8.5 * (S + G) + 6 + S + 26;
+  const vh = legendY + 2 * 18 + 8;
   // Legend under the table.
   const cats = Object.keys(CATEGORY_NAMES) as ElementCategory[];
   out.push(`<g id="legend" data-static="">${cats.map((c, i) => {
-    const lx = X0 + (i % 5) * 176, ly = vh - 44 + Math.floor(i / 5) * 18;
+    const lx = X0 + (i % 5) * 176, ly = legendY + Math.floor(i / 5) * 18;
     return `<rect x="${lx}" y="${ly - 9}" width="11" height="11" rx="2" fill="${CATEGORY_COLORS[c]}" stroke="#d6d3d1"/><text x="${lx + 16}" y="${ly}" font-size="11" fill="#57534e">${CATEGORY_NAMES[c]}</text>`;
   }).join('')}</g>`);
   if (focus) {
