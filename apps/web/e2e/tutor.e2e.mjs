@@ -60,6 +60,8 @@ await p.addInitScript(() => {
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call7', name: 'show_molecule', arguments: JSON.stringify({ name: 'water', placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call8', name: 'draw_chart', arguments: JSON.stringify({ type: 'bar', labels: ['A', 'B'], series: [{ values: [1, 2] }], placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call10', name: 'show_image', arguments: JSON.stringify({ query: 'volcano', caption: 'Lava fountains', placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call11', name: 'ask_activity', arguments: JSON.stringify({ kind: 'choice', prompt: 'What is 2 + 2?', options: ['3', '4', '5'], answer: 1, hints: ['Count on from 2.'], placement: 'new section' }) });
+        this.server({ type: 'response.function_call_arguments.done', call_id: 'call12', name: 'run_simulation', arguments: JSON.stringify({ kind: 'pendulum', placement: 'new section' }) });
         this.server({ type: 'response.function_call_arguments.done', call_id: 'call9', name: 'draw_timeline', arguments: JSON.stringify({ events: [{ date: '500 BC', label: 'start' }, { date: 'AD 100', label: 'end' }], placement: 'new section' }) });
         this.server({ type: 'response.done', response: { id: rid, output: [] } });
         return;
@@ -175,6 +177,14 @@ await p.screenshot({ path: S + '/3-e2e.png' });
 await p.getByPlaceholder('Type a message…').fill('SHOW');
 await p.keyboard.press('Enter');
 await p.waitForTimeout(1500);
+// Answer the activity: wrong first, then right (the card checks it itself).
+const act = p.locator('.act').first();
+await act.locator('[data-i="0"]').dispatchEvent('click');
+await p.waitForTimeout(400);
+const wrongShown = await act.locator('.act-fb.bad').count();
+await act.locator('[data-i="1"]').dispatchEvent('click');
+await p.waitForTimeout(600);
+const rightShown = await act.locator('.act-fb.good').count();
 const sent = await p.evaluate(() => window.__sent);
 const window_stoppedAt = await p.evaluate(() => window.__stoppedAt);
 const texts = sent.filter((e) => e.type === 'conversation.item.create').map((e) => e.item.type === 'message' ? e.item.content.map((c) => c.text ?? '[image]').join(' ') : 'TOOL_OUTPUT ' + e.item.output);
@@ -237,6 +247,9 @@ check('picture shown with caption, author, license and source links', await p.ev
 }));
 check('the tutor model gets to see the picture', sent.some((e) => e.type === 'conversation.item.create' && e.item.content?.some?.((c) => c.type === 'input_image' && c.image_url.startsWith('data:image/jpeg')) && e.item.content[0].text.startsWith('[Picture]')));
 check('picture data not inside the tool output', texts.some((t) => t.startsWith('TOOL_OUTPUT') && t.includes('Stromboli Eruption') && !t.includes('data:image')));
+check('activity card checks answers instantly (hint on a miss, praise when right)', wrongShown === 1 && rightShown === 1);
+check('activity results reach the tutor', texts.some((t) => t.startsWith('[Activity] Try 1') && t.includes('picked A) 3')) && texts.some((t) => t.startsWith('[Activity] The student solved') && t.includes('on try 2')));
+check('simulation card plays with sliders', await p.evaluate(() => !!document.querySelector('.sim svg [data-frame] circle') && document.querySelectorAll('.sim input[type=range]').length === 2));
 check('typed message sent', texts.some((t) => t === 'Is that right?'));
 check('check my work sent with summary', texts.some((t) => t.startsWith('[Check my work]') && t.includes('handwriting "3x = 12"') && t.includes('ai math "3x + 2 = 14"')));
 check('math rendered on board', (await p.locator('.board-math').count()) === 1);

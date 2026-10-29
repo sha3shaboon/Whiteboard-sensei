@@ -1,7 +1,7 @@
 // Connects student board activity to the AI: grouped events -> handwriting recognition -> silent context.
 // See spec § AI perception of the board.
 
-import { StudentEventGrouper, boardSummary, describeContent, intersects, letter, type AnswerElement, type Board, type BoardElement, type Bounds, type StrokeElement, type StudentEvent } from '@ai-tutor/board';
+import { StudentEventGrouper, boardSummary, describeContent, gradeActivity, intersects, letter, simFacts, type ActivityElement, type AnswerElement, type Board, type BoardElement, type Bounds, type StrokeElement, type StudentEvent } from '@ai-tutor/board';
 import type { BoardView } from '@ai-tutor/board/view';
 import { apiFetch } from '../api';
 
@@ -84,6 +84,32 @@ export class TutorBridge {
     this.sink.respond();
   }
 
+  /**
+   * Tells the tutor how an activity went. The app has already shown instant feedback and hints, so
+   * the tutor is asked to speak when it adds something: a right answer, a reveal, a first miss,
+   * or a third miss. Returns whether to ask for a response.
+   */
+  private reportActivity(el: ActivityElement, before: ActivityElement): boolean {
+    const c = el.content, b = before.content;
+    if (c.status === b.status && c.attempts === b.attempts) return false;
+    const q = `activity #${el.id} (${c.spec.kind.replace('_', ' ')}) "${c.prompt}"`;
+    const detail = c.response !== undefined ? gradeActivity(c.spec, c.response).detail : '';
+    if (c.status === 'correct') {
+      this.send(`[Activity] The student solved ${q}${c.attempts > 1 ? ` on try ${c.attempts}` : ' first try'}: ${detail}. The app already celebrated. Praise specifically in one short sentence, then continue (next question, or build on it).`);
+      return true;
+    }
+    if (c.status === 'revealed') {
+      this.send(`[Activity] The student pressed "Show me" on ${q} after ${c.attempts} tries; the app showed the answer${c.explanation ? ' and your explanation' : ''}. Walk through why it's right, briefly and kindly, then offer a similar one to try.`);
+      return true;
+    }
+    if (c.status === 'wrong') {
+      const hint = c.hints?.length ? c.hints[Math.min(c.attempts - 1, c.hints.length - 1)] : undefined;
+      this.send(`[Activity] Try ${c.attempts} on ${q} was not right: ${detail}. The app showed "${c.feedback ?? 'Not quite'}"${hint ? ` and the hint "${hint}"` : ''}.${c.attempts === 1 || c.attempts >= 3 ? ' Give a short nudge that targets their mistake (not the answer).' : ' Stay quiet unless they ask: they are trying again.'}`);
+      return c.attempts === 1 || c.attempts >= 3;
+    }
+    return false;
+  }
+
   private enqueue(task: () => Promise<void> | void): Promise<void> {
     // Serialize so events reach the AI in order even though recognition is async.
     this.queue = this.queue.then(task).catch((err) => console.error('board event failed', err));
@@ -133,6 +159,18 @@ export class TutorBridge {
         if (e.element.type === 'answer') {
           await this.submitAnswer(e.element);
           return;
+        }
+        if (e.element.type === 'activity' && e.before.type === 'activity') {
+          if (this.reportActivity(e.element, e.before)) this.sink.respond();
+          return;
+        }
+        if (e.element.type === 'simulation' && e.before.type === 'simulation') {
+          const before = e.before.content.params, after = e.element.content.params;
+          const changed = Object.keys(after).filter((k) => after[k] !== before[k]).map((k) => `${k} ${before[k]} → ${after[k]}`);
+          if (!changed.length) break;
+          const facts = Object.entries(simFacts(e.element.content.kind, after)).map(([k, v]) => `${k} ${+v.toFixed(2)}`).join(', ');
+          this.send(`[Board] The student changed the ${e.element.content.kind} simulation #${e.element.id}: ${changed.join(', ')} (now ${facts}). If you're not mid-sentence, react to what they found.`);
+          break;
         }
         this.send(`[Board] Student changed #${e.element.id} from ${describeContent(e.before)} to ${describeContent(e.element)}.`);
         break;

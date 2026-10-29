@@ -4,3 +4,6 @@ export * from './draw';
 export * from './structure';
 export * from './sketch';
 export * from './theme';
+export * from './activity';
+export * from './simulation';
+export * from './feedback';

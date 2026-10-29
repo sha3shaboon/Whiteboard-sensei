@@ -110,6 +110,8 @@ export function App() {
     });
     view.theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
     viewRef.current = view;
+    // Demo/test hook: drive the same tools the AI uses (only with ?demo).
+    if (demoAvailable) (window as unknown as { __tutor: unknown }).__tutor = { board, view, run: (name: string, args: Record<string, unknown>) => executeTool(board, view, name, args) };
     bridgeRef.current = new TutorBridge(board, view, client, (text) => eventLine(`Board → AI: ${text}`));
     return () => {
       bridgeRef.current?.dispose();

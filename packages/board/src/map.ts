@@ -12,6 +12,8 @@ export interface MapSpec {
   region?: 'world' | 'usa';
   /** Zoom to these countries/states (default: all highlighted ones; else the whole region). */
   focus?: string[];
+  /** Give every country/state shape an id (c-<name>) so it can be clicked (map_click activities). */
+  pickable?: boolean;
   /** Zoom to a box instead: degrees. */
   bounds?: { west: number; south: number; east: number; north: number };
   highlight?: { name: string; color?: string; label?: string }[];
@@ -81,7 +83,8 @@ export function findShape(shapes: Shape[], name: string): Shape | undefined {
 // ---------- building ----------
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-const slug = (s: string) => normalizeName(s).replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '') || 'x';
+/** Stable id fragment for a place name ("Côte d'Ivoire" -> "cote-d-ivoire"). */
+export const mapSlug = (s: string) => normalizeName(s).replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '') || 'x';
 const fmt = (n: number) => Math.round(n * 10) / 10;
 
 export async function buildMap(spec: MapSpec, load: MapLoader): Promise<BuiltMap> {
@@ -136,7 +139,7 @@ export async function buildMap(spec: MapSpec, load: MapLoader): Promise<BuiltMap
   parts.push(
     `<g id="base" data-static="1" clip-path="url(#frame)">` +
       `<rect x="0" y="${fmt(oy)}" width="${vw}" height="${vh}" fill="#eef6fb" stroke="none"/>` +
-      shapes.map((f) => `<path d="${path(f) ?? ''}" fill="#f7f7f5" stroke="#b9b9b2" stroke-width="0.6"/>`).join('') +
+      shapes.map((f) => `<path${spec.pickable ? ` id="c-${mapSlug(f.properties.name)}"` : ''} d="${path(f) ?? ''}" fill="#f7f7f5" stroke="#b9b9b2" stroke-width="0.6"/>`).join('') +
       `</g>`,
   );
 
@@ -147,10 +150,10 @@ export async function buildMap(spec: MapSpec, load: MapLoader): Promise<BuiltMap
     matched.push(f.properties.name);
     const color = h.color && /^#[0-9a-f]{6}$/i.test(h.color) ? h.color : COLORS[i % COLORS.length]!;
     const fill = FILLS[color] ?? color;
-    parts.push(`<path id="area-${slug(h.name)}" clip-path="url(#frame)" d="${path(f) ?? ''}" fill="${fill}" stroke="${color}" stroke-width="1.4"/>`);
+    parts.push(`<path id="area-${mapSlug(h.name)}" clip-path="url(#frame)" d="${path(f) ?? ''}" fill="${fill}" stroke="${color}" stroke-width="1.4"/>`);
     if (spec.labels !== false) {
       const [cx, cy] = path.centroid(f);
-      if (Number.isFinite(cx)) labels.push(`<text id="label-${slug(h.name)}" x="${fmt(cx)}" y="${fmt(cy)}" text-anchor="middle" font-size="13" font-weight="600" fill="${color}" stroke="#ffffff" stroke-width="3" paint-order="stroke">${esc(h.label ?? f.properties.name)}</text>`);
+      if (Number.isFinite(cx)) labels.push(`<text id="label-${mapSlug(h.name)}" x="${fmt(cx)}" y="${fmt(cy)}" text-anchor="middle" font-size="13" font-weight="600" fill="${color}" stroke="#ffffff" stroke-width="3" paint-order="stroke">${esc(h.label ?? f.properties.name)}</text>`);
     }
   });
   for (const name of spec.focus ?? []) if (!findShape(shapes, name) && !unmatched.includes(name)) unmatched.push(name);
@@ -171,8 +174,8 @@ export async function buildMap(spec: MapSpec, load: MapLoader): Promise<BuiltMap
     const p = projection([m.lon, m.lat]);
     if (!p) continue;
     const color = m.color && /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#1c1c1a';
-    parts.push(`<circle id="marker-${slug(m.label)}" cx="${fmt(p[0])}" cy="${fmt(p[1])}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>`);
-    labels.push(`<text id="marker-label-${slug(m.label)}" x="${fmt(p[0] + 7)}" y="${fmt(p[1] + 4)}" font-size="12" fill="#1c1c1a" stroke="#ffffff" stroke-width="3" paint-order="stroke">${esc(m.label)}</text>`);
+    parts.push(`<circle id="marker-${mapSlug(m.label)}" cx="${fmt(p[0])}" cy="${fmt(p[1])}" r="4" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>`);
+    labels.push(`<text id="marker-label-${mapSlug(m.label)}" x="${fmt(p[0] + 7)}" y="${fmt(p[1] + 4)}" font-size="12" fill="#1c1c1a" stroke="#ffffff" stroke-width="3" paint-order="stroke">${esc(m.label)}</text>`);
   }
 
   return {
@@ -207,3 +210,10 @@ export const fetchTopology: MapLoader = (url) => {
   if (!cache.has(url)) cache.set(url, fetch(url).then((r) => (r.ok ? (r.json() as Promise<Topology>) : Promise.reject(new Error(`map data ${r.status}`)))));
   return cache.get(url)!;
 };
+
+/** Canonical names for places as they appear on the map ("USA" -> "United States of America"); null when unknown. */
+export async function resolvePlaces(names: string[], region: 'world' | 'usa', load: MapLoader): Promise<(string | null)[]> {
+  const topo = await load(region === 'usa' ? MAP_SOURCES.usa : MAP_SOURCES.world110);
+  const shapes = toShapes(topo, region === 'usa' ? 'states' : 'countries');
+  return names.map((n) => findShape(shapes, n)?.properties.name ?? null);
+}

@@ -74,6 +74,21 @@ pnpm --filter @ai-tutor/web e2e   # with pnpm dev running: full session against 
 
 Not yet: accounts, saved sessions/profiles (Stage 5), shape resizing, multi-select.
 
+## Hands-on activities and subject tools
+
+The tutor teaches in short loops: explain one idea on the board, give a hands-on activity, react to the result. Activities are checked by the app itself (`packages/board/src/activity.ts`), so feedback is instant and costs no AI call: a chime and confetti when right, a gentle shake and the tutor's hint when not, "Show me" after two tries. The tutor then gets an `[Activity]` message with what the student did.
+
+| Activity (`ask_activity` kind) | The student… |
+| --- | --- |
+| `choice`, `answer` | taps an option / types an answer (numbers accept 3/4 = 0.75 = 75%) |
+| `order`, `sort`, `match` | drags items into order, into groups, or pairs them |
+| `cloze`, `select` | fills blanks from a word bank / taps the right words in a passage |
+| `number_line`, `fraction_shade`, `plot_point` | places a marker, shades parts, plots points |
+| `map_click`, `label` | clicks the country on a real map / drags labels onto a sketch's parts |
+| `chem_balance` | sets coefficients while live atom counts show what's balanced |
+
+Subject visuals, all computed: number lines with hops, fraction models, base-ten blocks/ten frames/arrays/counters, column arithmetic with carries and long division, the periodic table with electron configurations, Punnett squares, glossed sentences for language learning, music notation with a keyboard (played aloud), and live physics simulations (projectile, pendulum, spring, wave) with sliders.
+
 ## Data sources and licensing
 
 Precise visuals come from real data rather than the model drawing freehand. Every item shows its credit on the board.

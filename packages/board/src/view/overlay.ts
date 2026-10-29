@@ -15,7 +15,7 @@ export type DomContent =
   | { type: 'image'; content: ImageElement['content'] };
 
 /** Inline math inside table cells / choices: text between $...$ is rendered with KaTeX. */
-function richText(text: string): string {
+export function richText(text: string): string {
   return text
     .split(/(\$[^$]+\$)/g)
     .map((part) =>
@@ -26,7 +26,7 @@ function richText(text: string): string {
     .join('');
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 

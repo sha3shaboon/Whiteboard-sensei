@@ -4,7 +4,7 @@ import type { AnnotationElement, AnswerElement, ArrowElement, BoardElement, Boun
 import { compileExpression } from '../expression';
 import { arrowPolyline, lineEnds, regionBounds } from '../geometry';
 
-export const DOM_TYPES = new Set(['text', 'math', 'code', 'table', 'choice', 'sketch', 'image']);
+export const DOM_TYPES = new Set(['text', 'math', 'code', 'table', 'choice', 'sketch', 'image', 'activity', 'simulation']);
 export const SHAPE_FONT = 16;
 
 export function strokeWidthAt(base: number, pressure: number): number {

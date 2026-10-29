@@ -88,7 +88,7 @@ export type SketchElement = ElementBase<
     parts: string[];
     title?: string;
     /** How it was made: free SVG, a computed geometry figure, or stroke-order data. */
-    kind?: 'svg' | 'geometry' | 'strokes' | 'map' | 'molecule' | 'chart' | 'timeline';
+    kind?: 'svg' | 'geometry' | 'strokes' | 'map' | 'molecule' | 'chart' | 'timeline' | 'numberline' | 'fractions' | 'manipulatives' | 'arithmetic' | 'periodic' | 'punnett' | 'gloss' | 'notation';
     /** Source data for regenerating (geometry spec / stroke data), kept so updates can rebuild it. */
     source?: unknown;
     /** Attribution shown under the drawing (e.g. stroke data license). */
@@ -117,6 +117,13 @@ export type ImageElement = ElementBase<
     alternatives?: unknown[];
   }
 >;
+/** A Synthesis-style interactive question, checked by the app (see activity.ts). */
+export type ActivityElement = ElementBase<'activity', import('./activity').ActivityContent>;
+/** A live physics simulation with sliders (see simulation.ts). */
+export type SimulationElement = ElementBase<
+  'simulation',
+  { kind: import('./simulation').SimulationKind; params: Record<string, number>; controls: string[]; title?: string; /** Bump to replay. */ run: number }
+>;
 export type TableElement = ElementBase<'table', { headers: string[]; rows: string[][]; color: string; title?: string }>;
 /** Clickable multiple-choice card. `selected` is set by the student. */
 export type ChoiceElement = ElementBase<'choice', { question: string; choices: string[]; selected?: number }>;
@@ -140,6 +147,8 @@ export type BoardElement =
   | StructureElement
   | SketchElement
   | ImageElement
+  | ActivityElement
+  | SimulationElement
   | ChoiceElement
   | AnswerElement
   | AnnotationElement;

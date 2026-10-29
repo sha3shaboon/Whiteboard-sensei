@@ -2,6 +2,8 @@ import type { Board } from './board';
 import type { BoardElement, StrokeElement } from './elements';
 import { union } from './geometry';
 import { describeStructure } from './structure';
+import { describeActivity } from './activity';
+import { simFacts } from './simulation';
 
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const r = (n: number) => Math.round(n);
@@ -40,6 +42,12 @@ export function describeContent(el: BoardElement): string {
       return `${el.content.language} code "${clip(el.content.code.replace(/\s+/g, ' '))}"`;
     case 'annotation':
       return `${el.content.mode} on #${el.content.target}`;
+    case 'activity':
+      return describeActivity(el.content);
+    case 'simulation': {
+      const facts = Object.entries(simFacts(el.content.kind, el.content.params)).map(([k, v]) => `${k} ${+v.toFixed(2)}`).join(', ');
+      return `${el.content.kind} simulation (${Object.entries(el.content.params).map(([k, v]) => `${k}=${v}`).join(', ')}; ${facts})`;
+    }
   }
 }
 

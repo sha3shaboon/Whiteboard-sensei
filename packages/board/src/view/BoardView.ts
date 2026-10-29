@@ -1,6 +1,9 @@
 // Interactive whiteboard: canvas for ink + DOM layer for text/math/code, a pan/zoom camera,
 // and the student tools. Framework-independent; the React app just mounts it.
 
+import { renderActivity } from './activity';
+import { renderSimulation } from './simulation';
+import type { ActivityContent } from '../activity';
 import { DARK_SURFACE, themeColor, themeContext, themeDom, type Theme } from './theme';
 import type { Board, BoardChange } from '../board';
 import { COLORS, type BoardElement, type Bounds, type ElementId, type Point, type StrokeElement, type StrokePoint } from '../elements';
@@ -66,6 +69,7 @@ export class BoardView {
   private cleanup: (() => void)[] = [];
 
   private _theme: Theme = 'light';
+  private dim!: HTMLDivElement;
 
   /** Light paper or dark board. Content keeps its light-theme colors; they are converted when drawn. */
   get theme(): Theme {
@@ -79,6 +83,7 @@ export class BoardView {
     this.root.dataset.theme = t;
     // Re-render rich content in the new colors (without replaying draw-in animations).
     for (const el of this.board.all()) this.syncDom(el, true);
+    this.updateFocus();
     this.updateGrid();
     this.dirty = true;
   }
@@ -106,7 +111,10 @@ export class BoardView {
     top.appendChild(this.topWorld);
     this.topWorld.addEventListener('click', (e) => this.onInteract(e));
 
-    this.root.append(overlay, this.canvas, top);
+    // Spotlight: while a question waits for the student, the rest of the board steps back a little.
+    this.dim = document.createElement('div');
+    Object.assign(this.dim.style, { position: 'absolute', inset: '0', pointerEvents: 'none', opacity: '0', transition: 'opacity .35s ease' });
+    this.root.append(overlay, this.canvas, this.dim, top);
     container.appendChild(this.root);
     this.measurer = new Measurer(this.root);
 
@@ -200,7 +208,27 @@ export class BoardView {
       if (c.kind === 'updated' && c.origin === 'ai') this.animateUpdate(c.before, c.after);
       this.syncDom(c.kind === 'added' ? c.element : c.after);
     }
+    this.updateFocus();
     this.invalidate();
+  }
+
+  private updateFocus(): void {
+    const open = this.board.all().some((e) => e.type === 'activity' && e.author === 'ai' && (e.content.status === 'open' || e.content.status === 'wrong') && e.content.focus !== false);
+    this.dim.style.background = this._theme === 'dark' ? 'rgba(5,6,11,0.5)' : 'rgba(250,250,249,0.6)';
+    this.dim.style.opacity = open ? '1' : '0';
+  }
+
+  /** Height an activity card will take at this width (for placing it before it's on the board). */
+  measureActivity(content: ActivityContent, width: number): number {
+    const node = document.createElement('div');
+    Object.assign(node.style, { position: 'absolute', left: '-10000px', top: '0', visibility: 'hidden' });
+    this.root.appendChild(node);
+    renderActivity(node, { id: `measure-${Math.random()}`, type: 'activity', author: 'ai', bounds: { x: 0, y: 0, width, height: 0 }, content, createdAt: 0, updatedAt: 0 });
+    node.style.width = `${width}px`;
+    node.style.left = '-10000px';
+    const h = node.getBoundingClientRect().height;
+    node.remove();
+    return Math.ceil(h);
   }
 
   private scheduleReveal(el: BoardElement): void {
@@ -235,8 +263,8 @@ export class BoardView {
   }
 
   private syncDom(el: BoardElement, themeOnly = false): void {
-    if (!isDomElement(el) && el.type !== 'answer') return;
-    const interactive = el.type === 'choice' || el.type === 'answer';
+    if (!isDomElement(el) && el.type !== 'answer' && el.type !== 'activity' && el.type !== 'simulation') return;
+    const interactive = el.type === 'choice' || el.type === 'answer' || el.type === 'activity' || el.type === 'simulation';
     let node = this.domNodes.get(el.id);
     if (!node) {
       node = document.createElement('div');
@@ -244,6 +272,15 @@ export class BoardView {
       if (interactive) node.dataset.interactive = '';
       (interactive ? this.topWorld : this.world).appendChild(node);
       this.domNodes.set(el.id, node);
+    }
+    if (el.type === 'activity' || el.type === 'simulation') {
+      const id = el.id;
+      if (el.type === 'activity') renderActivity(node, el, { commit: (content) => this.board.update(id, { content }, 'student'), paint: (n) => themeDom(n, this._theme) });
+      else renderSimulation(node, el, { commit: (params) => this.board.update(id, { content: { params } as never }, 'student'), theme: () => this._theme });
+      node.dataset.kind = el.type;
+      // Natural height: the layout reserves room for the tallest state, but the card only shows what it needs.
+      Object.assign(node.style, { left: `${el.bounds.x}px`, top: `${el.bounds.y}px`, width: `${el.bounds.width}px`, minHeight: el.type === 'activity' ? '' : `${el.bounds.height}px`, transform: '', pointerEvents: 'auto' });
+      return;
     }
     if (el.type === 'answer') {
       // Only the Done button lives in the DOM; the dashed box is drawn on the canvas under the student's ink.

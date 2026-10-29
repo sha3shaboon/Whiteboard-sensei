@@ -11,6 +11,8 @@ import {
   strokeTypeName,
   totalStrokes,
   buildFigure,
+  simParams,
+  simFacts,
   buildMoleculeSvg,
   buildChart,
   buildTimeline,
@@ -43,6 +45,7 @@ import {
 import { SHAPE_FONT, sanitizeSvg, wrapLines, type BoardView, type DomContent } from '@ai-tutor/board/view';
 import { apiFetch } from '../api';
 import type { ToolDefinition } from './realtime';
+import { SUBJECT_TOOLS, SUBJECT_TOOL_NAMES, executeSubjectTool, updateSubjectSketch, type Placer } from './subjectTools';
 
 const placement = {
   type: 'string',
@@ -285,6 +288,9 @@ export const TOOLS: ToolDefinition[] = [
         svg: { type: 'string', description: 'For sketches: the full new SVG. Keep the ids of parts that stay; new parts are drawn in, missing ones disappear.' },
         geometry: { type: 'object', description: 'For draw_geometry figures: the full new figure spec (same fields as draw_geometry). New parts are drawn in.' },
         reveal: { type: 'number', description: 'For stroke-order drawings: total number of strokes to show' },
+        spec: { type: 'object', description: 'For number lines, fraction models, manipulatives, column arithmetic, periodic table, Punnett squares, glossed text, notation: the full new spec (same fields as the tool that made it).' },
+        params: { type: 'object', description: 'For simulations: new parameter values (replays it)' },
+        play: { type: 'boolean', description: 'For notation: play the notes again' },
         map: { type: 'object', description: 'For maps: the full new map spec (same fields as show_map). New highlights/markers/routes draw in.' },
         pick: { type: 'number', description: 'For pictures: show alternative n from the show_image result instead' },
         caption: { type: 'string', description: 'For pictures: new caption' },
@@ -397,6 +403,7 @@ export const TOOLS: ToolDefinition[] = [
     description: "Erase one of your own items (by id). Don't erase the student's work unless they ask.",
     parameters: obj({ id: { type: 'string' } }, ['id']),
   },
+  ...SUBJECT_TOOLS,
 ];
 
 type Args = Record<string, unknown>;
@@ -433,6 +440,7 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
     return { content, size: view.measure({ type: 'text', content }) };
   };
 
+  if (SUBJECT_TOOL_NAMES.has(name)) return executeSubjectTool(board, view, name, args, place as unknown as Placer);
   switch (name) {
     case 'write_text': {
       const style = args.style === 'title' ? 'title' : 'label';
@@ -671,6 +679,14 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
       const el = board.get(id(args.id));
       if (!el) return { ok: false, error: `Unknown item ${args.id}` };
       if (el.author !== 'ai') return { ok: false, error: "That's the student's work; annotate it instead of changing it" };
+      const subject = updateSubjectSketch(board, el, args);
+      if (subject) return subject;
+      if (el.type === 'simulation') {
+        const params = { ...el.content.params, ...((args.params as Args) ?? {}) };
+        board.update(el.id, { content: { ...el.content, params: simParams(el.content.kind, params), run: el.content.run + 1 } }, 'ai');
+        return { ok: true, params: simParams(el.content.kind, params), facts: Object.fromEntries(Object.entries(simFacts(el.content.kind, simParams(el.content.kind, params))).map(([k, v]) => [k, +v.toFixed(2)])) };
+      }
+      if (el.type === 'activity') return { ok: false, error: 'Activities are answered by the student; ask a new one with ask_activity instead' };
       const color = STATE_COLORS[str(args.state)];
       if (el.type === 'sketch' && el.content.kind === 'map') {
         if (!args.map || typeof args.map !== 'object') return Promise.resolve({ ok: false, error: 'Send the full new map spec as map: {...}' });
