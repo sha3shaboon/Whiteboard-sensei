@@ -213,7 +213,7 @@ export class BoardView {
   }
 
   private updateFocus(): void {
-    const open = this.board.all().some((e) => e.type === 'activity' && e.author === 'ai' && (e.content.status === 'open' || e.content.status === 'wrong') && e.content.focus !== false);
+    const open = this.board.all().some((e) => e.type === 'activity' && e.author === 'ai' && (e.content.status === 'open' || e.content.status === 'wrong') && e.content.focus !== false && e.content.mode !== 'example');
     this.dim.style.background = this._theme === 'dark' ? 'rgba(5,6,11,0.5)' : 'rgba(250,250,249,0.6)';
     this.dim.style.opacity = open ? '1' : '0';
   }

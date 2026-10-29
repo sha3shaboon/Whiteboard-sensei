@@ -28,6 +28,8 @@ import {
   straightBetween,
   resolvePlacement,
   union,
+  describeStep,
+  solutionSteps,
   type Board,
   type ArrowPath,
   type CharStrokes,
@@ -287,7 +289,7 @@ export const TOOLS: ToolDefinition[] = [
         state: { type: 'string', enum: ['active', 'done', 'error', 'normal'] },
         svg: { type: 'string', description: 'For sketches: the full new SVG. Keep the ids of parts that stay; new parts are drawn in, missing ones disappear.' },
         geometry: { type: 'object', description: 'For draw_geometry figures: the full new figure spec (same fields as draw_geometry). New parts are drawn in.' },
-        reveal: { type: 'number', description: 'For stroke-order drawings: total number of strokes to show' },
+        reveal: { description: 'Stroke-order drawings: total number of strokes to show. Worked examples (show_example): "next" (default) shows one more step, a number shows that many, "all" finishes it.' },
         spec: { type: 'object', description: 'For number lines, fraction models, manipulatives, column arithmetic, periodic table, Punnett squares, glossed text, notation: the full new spec (same fields as the tool that made it).' },
         params: { type: 'object', description: 'For simulations: new parameter values (replays it)' },
         play: { type: 'boolean', description: 'For notation: play the notes again' },
@@ -686,7 +688,18 @@ export function executeTool(board: Board, view: BoardView, name: string, args: A
         board.update(el.id, { content: { ...el.content, params: simParams(el.content.kind, params), run: el.content.run + 1 } }, 'ai');
         return { ok: true, params: simParams(el.content.kind, params), facts: Object.fromEntries(Object.entries(simFacts(el.content.kind, simParams(el.content.kind, params))).map(([k, v]) => [k, +v.toFixed(2)])) };
       }
-      if (el.type === 'activity') return { ok: false, error: 'Activities are answered by the student; ask a new one with ask_activity instead' };
+      if (el.type === 'activity') {
+        if (el.content.mode !== 'example') return { ok: false, error: 'Activities are answered by the student; ask a new one with ask_activity (or solve one in front of them with show_example)' };
+        const total = solutionSteps(el.content.spec), cur = el.content.shown ?? 0;
+        const r = args.reveal;
+        const shown = Math.max(0, Math.min(total, r === 'all' ? total : typeof r === 'number' || (typeof r === 'string' && /^\d+$/.test(r)) ? Number(r) : cur + 1));
+        board.update(el.id, { content: { ...el.content, shown } }, 'ai');
+        return {
+          ok: true, shown, total,
+          ...(shown > cur ? { did: Array.from({ length: shown - cur }, (_, i) => describeStep(el.content.spec, cur + i)).join('; ') } : {}),
+          ...(shown >= total ? { done: true, note: 'Solved. Sum up the method in a sentence, then let the student try a similar one (ask_activity with given).' } : {}),
+        };
+      }
       const color = STATE_COLORS[str(args.state)];
       if (el.type === 'sketch' && el.content.kind === 'map') {
         if (!args.map || typeof args.map !== 'object') return Promise.resolve({ ok: false, error: 'Send the full new map spec as map: {...}' });

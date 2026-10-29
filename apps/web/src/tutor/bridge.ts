@@ -1,7 +1,7 @@
 // Connects student board activity to the AI: grouped events -> handwriting recognition -> silent context.
 // See spec § AI perception of the board.
 
-import { StudentEventGrouper, boardSummary, describeContent, gradeActivity, intersects, letter, simFacts, type ActivityElement, type AnswerElement, type Board, type BoardElement, type Bounds, type StrokeElement, type StudentEvent } from '@ai-tutor/board';
+import { StudentEventGrouper, boardSummary, describeContent, describeStep, gradeActivity, solutionSteps, intersects, letter, simFacts, type ActivityElement, type AnswerElement, type Board, type BoardElement, type Bounds, type StrokeElement, type StudentEvent } from '@ai-tutor/board';
 import type { BoardView } from '@ai-tutor/board/view';
 import { apiFetch } from '../api';
 
@@ -91,6 +91,12 @@ export class TutorBridge {
    */
   private reportActivity(el: ActivityElement, before: ActivityElement): boolean {
     const c = el.content, b = before.content;
+    if (c.mode === 'example') {
+      const shown = c.shown ?? 0, total = solutionSteps(c.spec);
+      if (shown <= (b.shown ?? 0)) return false;
+      this.send(`[Activity] The student tapped "Next step" on worked example #${el.id}: step ${shown} of ${total} is now shown (${describeStep(c.spec, shown - 1)}). Explain why that step works in a sentence or two${shown >= total ? ', then sum up the method and offer a similar one to try (ask_activity with given)' : ''}.`);
+      return true;
+    }
     if (c.status === b.status && c.attempts === b.attempts) return false;
     const q = `activity #${el.id} (${c.spec.kind.replace('_', ' ')}) "${c.prompt}"`;
     const detail = c.response !== undefined ? gradeActivity(c.spec, c.response).detail : '';

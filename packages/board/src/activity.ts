@@ -2,7 +2,7 @@
 // placing or typing. Every kind is checked here, deterministically, so feedback is instant and
 // needs no AI call; the tutor is told the result afterwards.
 
-import { checkBalance, balanceEquation } from './chemistry';
+import { checkBalance, balanceEquation, parseFormula } from './chemistry';
 import { compileExpression } from './expression';
 
 export type ActivitySpec =
@@ -38,6 +38,12 @@ export interface ActivityContent {
   response?: unknown;
   /** Short result line for the student ("2 of 4 in the right place"). */
   feedback?: string;
+  /** 'example': the tutor solves it step by step while explaining (read-only for the student). */
+  mode?: 'practice' | 'example';
+  /** Example mode: how many solution steps are revealed so far. */
+  shown?: number;
+  /** Practice mode: how many solution steps start already done (guided practice, "we do"). */
+  given?: number;
 }
 
 export interface Grade {
@@ -222,6 +228,106 @@ export function solutionFor(spec: ActivitySpec): unknown {
   }
 }
 
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+
+/** How a fraction_shade solution splits into steps: one unit fraction at a time when that's whole parts. */
+function shadeSteps(spec: Extract<ActivitySpec, { kind: 'fraction_shade' }>): { total: number; steps: number } {
+  const total = Math.round((spec.numerator / spec.denominator) * spec.parts);
+  const steps = spec.numerator > 0 && total % spec.numerator === 0 ? spec.numerator : total;
+  return { total, steps: Math.max(1, steps) };
+}
+
+/**
+ * The order a chemist sets coefficients: element by element, rarest first and H, O last, so each
+ * step balances one element. Returns each species once with the element it balances.
+ */
+function chemOrder(spec: Extract<ActivitySpec, { kind: 'chem_balance' }>): { i: number; element: string }[] {
+  const species = [...spec.reactants, ...spec.products].map((f) => parseFormula(f));
+  const elements = [...new Set(species.flatMap((s) => Object.keys(s)))];
+  const late = (e: string) => (e === 'O' ? 2 : e === 'H' ? 1 : 0);
+  elements.sort((a, b) => late(a) - late(b) || species.filter((s) => s[a]).length - species.filter((s) => s[b]).length);
+  const out: { i: number; element: string }[] = [];
+  for (const e of elements) species.forEach((s, i) => { if (s[e] && !out.some((o) => o.i === i)) out.push({ i, element: e }); });
+  species.forEach((_, i) => { if (!out.some((o) => o.i === i)) out.push({ i, element: '' }); });
+  return out;
+}
+
+/** Number of steps in the worked solution (each one is a single move the student could make). */
+export function solutionSteps(spec: ActivitySpec): number {
+  switch (spec.kind) {
+    case 'choice': return spec.answer.length;
+    case 'answer': case 'number_line': return 1;
+    case 'order': return spec.items.length;
+    case 'sort': return spec.categories.reduce((n, c) => n + c.items.length, 0);
+    case 'match': return spec.pairs.length;
+    case 'cloze': return clozeBlanks(spec.text).length;
+    case 'select': return selectTokens(spec.text).filter((t) => t.correct).length;
+    case 'fraction_shade': return shadeSteps(spec).steps;
+    case 'plot_point': return spec.points.length;
+    case 'map_click': return spec.answers.length;
+    case 'chem_balance': return spec.reactants.length + spec.products.length;
+    case 'label': return spec.targets.length;
+  }
+}
+
+/**
+ * The solution with only its first n steps done, in the same shape as a student response. Order keeps
+ * the rest shuffled; chem_balance uses null for coefficients not decided yet.
+ */
+export function partialSolution(spec: ActivitySpec, n: number, seed = ''): unknown {
+  const k = Math.max(0, Math.min(n, solutionSteps(spec)));
+  const full = solutionFor(spec);
+  switch (spec.kind) {
+    case 'choice': case 'select': case 'plot_point': case 'map_click': return (full as unknown[]).slice(0, k);
+    case 'answer': return k ? full : '';
+    case 'number_line': return k ? full : null;
+    case 'order': return [...spec.items.slice(0, k), ...(k < spec.items.length - 1 ? shuffled(spec.items.slice(k), seed) : spec.items.slice(k))];
+    // Built from the spec's own order: objects reorder numeric-looking keys ("10" before "3").
+    case 'sort': return Object.fromEntries(spec.categories.flatMap((c) => c.items.map((i) => [i, c.name])).slice(0, k));
+    case 'match': return Object.fromEntries(spec.pairs.slice(0, k));
+    case 'label': return Object.fromEntries(spec.targets.slice(0, k).map((t) => [t.part, t.label]));
+    case 'cloze': return (full as string[]).map((w, i) => (i < k ? w : ''));
+    case 'fraction_shade': {
+      const { total, steps } = shadeSteps(spec);
+      return (full as number[]).slice(0, Math.round((total / steps) * k));
+    }
+    case 'chem_balance': {
+      const set = new Set(chemOrder(spec).slice(0, k).map((o) => o.i));
+      return (full as number[]).map((v, i) => (set.has(i) ? v : null));
+    }
+  }
+}
+
+/** What step i (0-based) of the worked solution does, in a short line the tutor can narrate. */
+export function describeStep(spec: ActivitySpec, i: number): string {
+  switch (spec.kind) {
+    case 'choice': { const j = spec.answer[i]!; return `${String.fromCharCode(65 + j)}) ${spec.options[j]} is ${spec.multiple ? 'one of the answers' : 'the answer'}`; }
+    case 'answer': return `The answer is ${spec.answers[0]}${spec.unit ? ` ${spec.unit}` : ''}`;
+    case 'order': return `${ordinal(i + 1)}: ${spec.items[i]}`;
+    case 'sort': { const [item, cat] = spec.categories.flatMap((c) => c.items.map((x) => [x, c.name]))[i]!; return `"${item}" goes in ${cat}`; }
+    case 'match': return `"${spec.pairs[i]![0]}" matches "${spec.pairs[i]![1]}"`;
+    case 'cloze': return `Blank ${i + 1}: "${clozeBlanks(spec.text)[i]![0]}"`;
+    case 'select': return `"${selectTokens(spec.text).filter((t) => t.correct)[i]!.text}" is one of them`;
+    case 'number_line': return `${spec.denominator ? `${Math.round(spec.answer * spec.denominator)}/${spec.denominator}` : fmt(spec.answer)} goes here on the line`;
+    case 'fraction_shade': {
+      const { total, steps } = shadeSteps(spec);
+      const per = total / steps, done = per * (i + 1);
+      return steps === spec.numerator ? `Shade ${per} more part${per === 1 ? '' : 's'}: that's ${i + 1}/${spec.denominator}` : `Shade part ${done}: ${done} of ${spec.parts}`;
+    }
+    case 'plot_point': return `Plot (${fmt(spec.points[i]!.x)}, ${fmt(spec.points[i]!.y)}): over ${fmt(spec.points[i]!.x)}, up ${fmt(spec.points[i]!.y)}`;
+    case 'map_click': return `This is ${spec.names[spec.answers[i]!] ?? spec.answers[i]}`;
+    case 'chem_balance': {
+      const { i: j, element } = chemOrder(spec)[i]!;
+      const k = balanceEquation(spec.reactants, spec.products) ?? [];
+      const all = [...spec.reactants, ...spec.products];
+      const atoms = element ? spec.reactants.reduce((n, f, r) => n + (parseFormula(f)[element] ?? 0) * (k[r] ?? 1), 0) : 0;
+      const sub = (f: string) => f.replace(/\d/g, (d) => '₀₁₂₃₄₅₆₇₈₉'[Number(d)]!);
+      return `${k[j] ?? 1} in front of ${sub(all[j]!)}${element ? ` (balances ${element}: ${atoms} on each side)` : ''}`;
+    }
+    case 'label': return `${spec.targets[i]!.label} (${spec.targets[i]!.part})`;
+  }
+}
+
 /** Checks an activity spec the AI wrote; returns problems to report back (empty when fine). */
 export function validateActivity(spec: ActivitySpec): string[] {
   const p: string[] = [];
@@ -263,6 +369,7 @@ export function validateActivity(spec: ActivitySpec): string[] {
 
 /** For the tutor's board summary. */
 export function describeActivity(c: ActivityContent): string {
+  if (c.mode === 'example') return `worked example (${c.spec.kind.replace('_', ' ')}) "${c.prompt.slice(0, 70)}" (step ${c.shown ?? 0} of ${solutionSteps(c.spec)} shown)`;
   const state = c.status === 'open' ? (c.attempts ? `not right yet after ${c.attempts} tries` : 'waiting for the student') : c.status === 'correct' ? `solved${c.attempts > 1 ? ` on try ${c.attempts}` : ''}` : c.status === 'revealed' ? 'answer shown' : `wrong (${c.attempts} tries)`;
   return `${c.spec.kind.replace('_', ' ')} activity "${c.prompt.slice(0, 70)}" (${state})`;
 }

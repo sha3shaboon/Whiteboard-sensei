@@ -87,6 +87,14 @@ The tutor teaches in short loops: explain one idea on the board, give a hands-on
 | `map_click`, `label` | clicks the country on a real map / drags labels onto a sketch's parts |
 | `chem_balance` | sets coefficients while live atom counts show what's balanced |
 
+The same cards are used to explain, following "I do, we do, you do":
+
+- **I do:** `show_example` puts up a card in worked-example mode and the tutor solves it while talking, revealing one step at a time with `update_item {id, reveal: "next"}`. Chips glide from the bank into place, the marker moves, parts get shaded. Each step is a real move from the solution (`solutionSteps` / `partialSolution` / `describeStep`); chemistry is balanced element by element. The student can also tap "Next step" themselves, and the tutor explains that step.
+- **We do:** `ask_activity` with `given: n` starts the student with the first n steps already done.
+- **You do:** a plain `ask_activity`.
+
+Cards animate any change (FLIP), for the student's moves as well as the tutor's.
+
 Subject visuals, all computed: number lines with hops, fraction models, base-ten blocks/ten frames/arrays/counters, column arithmetic with carries and long division, the periodic table with electron configurations, Punnett squares, glossed sentences for language learning, music notation with a keyboard (played aloud), and live physics simulations (projectile, pendulum, spring, wave) with sliders.
 
 ## Data sources and licensing

@@ -2,8 +2,10 @@
 // typing. One focused card per question with big touch targets; the app checks the answer itself
 // (activity.ts), so feedback is instant: a chime and confetti when right, a gentle shake and a hint
 // when not, and "Show me" after two tries. The tutor hears the result through the event bridge.
+// The same card doubles as a worked example: the tutor reveals the solution one step at a time while
+// explaining, and things glide into place (FLIP) whenever they move, for the tutor or the student.
 
-import { checkBalance, clozeBlanks, fractionLabel, gradeActivity, parseFormula, prettyFormula, selectTokens, shuffled, solutionFor, type ActivityContent, type ActivitySpec } from '../index';
+import { checkBalance, clozeBlanks, describeStep, fractionLabel, gradeActivity, parseFormula, partialSolution, prettyFormula, selectTokens, shuffled, solutionFor, solutionSteps, type ActivityContent, type ActivitySpec } from '../index';
 import type { ActivityElement } from '../elements';
 import { celebrate, playCorrect, playTap, playWrong, shake } from './feedback';
 import { escapeHtml, richText } from './overlay';
@@ -131,6 +133,14 @@ function injectStyles(): void {
 .act-btn { padding:11px 22px; border-radius:14px; border:1.5px solid var(--c-line); background:var(--c-soft); font-weight:650; font-size:15px; }
 .act-btn.act-primary { border:0; color:#fff !important; background:linear-gradient(135deg,#8b5cf6,#3b82f6); box-shadow:0 8px 20px rgba(99,102,241,.35); }
 .act-btn:disabled { opacity:.4; cursor:default; box-shadow:none; }
+.act.act-example { border-style:dashed; border-color:var(--c-chip-line); }
+.act-example .act-head { color:#0891b2; }
+.board-root[data-theme="dark"] .act-example .act-head { color:#22d3ee; }
+.act-example .act-step { background:rgba(8,145,178,.12); color:inherit; }
+.act-example .act-chip, .act-example .act-blank, .act-example .act-opt { cursor:default; }
+.act-fb.ex { background:var(--c-soft); color:var(--c-text); border:1.5px solid var(--c-line); font-weight:600; }
+.act-fb.ex b { color:#0891b2; }
+.board-root[data-theme="dark"] .act-fb.ex b { color:#22d3ee; }
 `;
   const style = document.createElement('style');
   style.id = 'act-styles';
@@ -194,14 +204,18 @@ function svgPoint(svg: SVGSVGElement, e: PointerEvent | MouseEvent): { x: number
   return { x: p.x, y: p.y };
 }
 
-const chipHtml = (v: string, attrs = '', cls = '') => `<span class="act-chip ${cls}" data-v="${escapeHtml(v)}" ${attrs}>${richText(v)}</span>`;
+const chipHtml = (v: string, attrs = '', cls = '') => `<span class="act-chip ${cls}" data-v="${escapeHtml(v)}" data-flip="c:${escapeHtml(v)}" ${attrs}>${richText(v)}</span>`;
 const prettyPlace = (slug: string) => slug.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 export function renderActivity(node: HTMLElement, el: ActivityElement, host?: ActivityHost): void {
   injectStyles();
   const c = el.content, spec = c.spec, id = el.id;
-  const locked = c.status === 'correct' || c.status === 'revealed';
-  const draft: unknown = locked ? c.response ?? solutionFor(spec) : drafts.get(id) ?? c.response ?? initial(spec);
+  const example = c.mode === 'example';
+  const total = solutionSteps(spec), shown = Math.max(0, Math.min(total, c.shown ?? 0));
+  const solved = c.status === 'correct' || c.status === 'revealed';
+  const locked = solved || example;
+  const draft: unknown = example ? partialSolution(spec, shown, id) : solved ? c.response ?? solutionFor(spec) : drafts.get(id) ?? c.response ?? (c.given ? givenStart(spec, c.given, id) : initial(spec));
+  const before = node.childElementCount ? snapshot(node) : null;
   const setDraft = (v: unknown, rerender = true) => {
     drafts.set(id, v);
     if (rerender) renderActivity(node, el, host);
@@ -209,8 +223,9 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
   };
   const showMarks = c.status !== 'open' && JSON.stringify(drafts.get(id) ?? c.response) === JSON.stringify(c.response);
   const marks = locked || (c.status === 'wrong' && showMarks);
+  const exampleDone = example && shown >= total;
   const autoSubmit = spec.kind === 'choice' && !spec.multiple;
-  node.className = `act act-k-${spec.kind} act-s-${c.status}${!locked && c.focus !== false ? ' act-live' : ''}`;
+  node.className = `act act-k-${spec.kind} act-s-${c.status}${!locked && c.focus !== false ? ' act-live' : ''}${example ? ' act-example' : ''}`;
   node.style.position = 'absolute';
   node.style.boxSizing = 'border-box';
 
@@ -219,18 +234,18 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
     case 'choice': {
       const sel = draft as number[];
       body = `<div class="act-options">${spec.options.map((o, i) => {
-        const cls = [sel.includes(i) ? 'sel' : '', marks && spec.answer.includes(i) && (locked || sel.includes(i)) ? 'ok' : '', marks && !spec.answer.includes(i) && sel.includes(i) ? 'bad' : ''].join(' ');
-        return `<button type="button" class="act-opt ${cls}" data-i="${i}" ${locked ? 'disabled' : ''}><b>${String.fromCharCode(65 + i)}</b><span>${richText(o)}</span></button>`;
+        const cls = [sel.includes(i) ? 'sel' : '', marks && spec.answer.includes(i) && (solved || sel.includes(i)) ? 'ok' : '', marks && !spec.answer.includes(i) && sel.includes(i) ? 'bad' : ''].join(' ');
+        return `<button type="button" class="act-opt ${cls}" data-i="${i}" data-flip="o${i}:${cls.trim()}" ${locked ? 'disabled' : ''}><b>${String.fromCharCode(65 + i)}</b><span>${richText(o)}</span></button>`;
       }).join('')}</div>`;
       break;
     }
     case 'answer':
-      body = `<div class="act-input-row"><input class="act-input" value="${escapeHtml(String(draft ?? ''))}" placeholder="${escapeHtml(spec.placeholder ?? 'Type your answer')}" ${locked ? 'disabled' : ''} inputmode="${spec.numeric ? 'decimal' : 'text'}" autocomplete="off"/>${spec.unit ? `<span style="font-size:18px;font-weight:600">${escapeHtml(spec.unit)}</span>` : ''}</div>`;
+      body = `<div class="act-input-row"><input class="act-input" data-flip="ans:${escapeHtml(String(draft ?? ''))}" value="${escapeHtml(String(draft ?? ''))}" placeholder="${escapeHtml(spec.placeholder ?? 'Type your answer')}" ${locked ? 'disabled' : ''} inputmode="${spec.numeric ? 'decimal' : 'text'}" autocomplete="off"/>${spec.unit ? `<span style="font-size:18px;font-weight:600">${escapeHtml(spec.unit)}</span>` : ''}</div>`;
       break;
     case 'order': {
       const order = (draft as string[]).length === spec.items.length ? (draft as string[]) : shuffled(spec.items, id);
       if ((draft as string[]).length !== spec.items.length && !locked) drafts.set(id, order);
-      body = `<div class="act-order">${order.map((v, i) => `<div class="act-chip ${marks && spec.items[i] === v ? 'ok' : ''} ${picked.get(id) === i ? 'picked' : ''}" data-v="${escapeHtml(v)}" data-i="${i}" data-drop="${i}"><span style="display:flex;align-items:center;gap:10px"><span class="act-num">${i + 1}</span>${richText(v)}</span>${locked ? '' : `<span class="act-move"><button type="button" data-up="${i}" aria-label="Move up">↑</button><button type="button" data-down="${i}" aria-label="Move down">↓</button></span>`}</div>`).join('')}</div>`;
+      body = `<div class="act-order">${order.map((v, i) => `<div class="act-chip ${marks && spec.items[i] === v && (!example || i < shown) ? 'ok' : ''} ${picked.get(id) === i ? 'picked' : ''}" data-v="${escapeHtml(v)}" data-flip="c:${escapeHtml(v)}" data-i="${i}" data-drop="${i}"><span style="display:flex;align-items:center;gap:10px"><span class="act-num">${i + 1}</span>${richText(v)}</span>${locked ? '' : `<span class="act-move"><button type="button" data-up="${i}" aria-label="Move up">↑</button><button type="button" data-down="${i}" aria-label="Move down">↓</button></span>`}</div>`).join('')}</div>`;
       break;
     }
     case 'sort': {
@@ -249,11 +264,11 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
       const leftChip = (l: string) => {
         const r = pairs[l];
         const cls = `${picked.get(id) === l ? 'picked' : ''} ${marks && r ? (right(l) === r ? 'ok' : 'bad') : ''}`;
-        return `<span class="act-chip ${cls}" data-l="${escapeHtml(l)}"><span>${richText(l)}</span>${r ? `<span class="act-pair" style="background:${colorOf(l)}">${lefts.indexOf(l) + 1}</span>` : ''}</span>`;
+        return `<span class="act-chip ${cls}" data-l="${escapeHtml(l)}"><span>${richText(l)}</span>${r ? `<span class="act-pair" data-flip="pl:${escapeHtml(l)}" style="background:${colorOf(l)}">${lefts.indexOf(l) + 1}</span>` : ''}</span>`;
       };
       const rightChip = (r: string) => {
         const l = Object.keys(pairs).find((k) => pairs[k] === r);
-        return `<span class="act-chip" data-r="${escapeHtml(r)}"><span>${richText(r)}</span>${l ? `<span class="act-pair" style="background:${colorOf(l)}">${lefts.indexOf(l) + 1}</span>` : ''}</span>`;
+        return `<span class="act-chip" data-r="${escapeHtml(r)}"><span>${richText(r)}</span>${l ? `<span class="act-pair" data-flip="pr:${escapeHtml(l)}" style="background:${colorOf(l)}">${lefts.indexOf(l) + 1}</span>` : ''}</span>`;
       };
       body = `<div class="act-match">${lefts.map((l, i) => leftChip(l) + rightChip(rights[i]!)).join('')}</div><div class="act-caption">Tap an item on the left, then its match on the right.</div>`;
       break;
@@ -266,7 +281,7 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
         const i = k++, v = vals[i] ?? '';
         const okCls = marks && v ? (blanks[i]!.some((a) => a.trim().toLowerCase() === v.trim().toLowerCase()) ? 'ok' : 'bad') : '';
         if (typed) return `<span class="act-blank filled ${okCls}"><input data-b="${i}" value="${escapeHtml(v)}" ${locked ? 'disabled' : ''} autocomplete="off"/></span>`;
-        return `<span class="act-blank ${v ? 'filled' : ''} ${okCls} ${picked.get(id) === `b${i}` ? 'act-over' : ''}" data-b="${i}" data-drop="b${i}">${v ? escapeHtml(v) : '&nbsp;'}</span>`;
+        return `<span class="act-blank ${v ? 'filled' : ''} ${okCls} ${picked.get(id) === `b${i}` ? 'act-over' : ''}" data-b="${i}" data-drop="b${i}">${v ? `<span data-flip="c:${escapeHtml(v)}">${escapeHtml(v)}</span>` : '&nbsp;'}</span>`;
       });
       let bank = '';
       if (!typed) {
@@ -287,7 +302,7 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
       const tokens = selectTokens(spec.text);
       body = `<div class="act-passage">${tokens.map((t, i) => {
         const cls = [sel.has(i) ? 'sel' : '', marks && sel.has(i) ? (t.correct ? 'ok' : 'bad') : '', c.status === 'revealed' && t.correct && !sel.has(i) ? 'missed' : ''].join(' ');
-        return `<span class="act-token ${cls}" data-t="${i}">${escapeHtml(t.text)}</span>`;
+        return `<span class="act-token ${cls}" data-t="${i}" data-flip="t${i}:${sel.has(i)}">${escapeHtml(t.text)}</span>`;
       }).join(' ')}</div>`;
       break;
     }
@@ -304,30 +319,31 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
         if (labelIt) ticks.push(`<text x="${x}" y="${y + 32}" text-anchor="middle" font-size="16" fill="#44403c">${spec.denominator ? fractionLabel(v, spec.denominator) : +v.toFixed(4)}</text>`);
       }
       const v = draft as number | null;
-      const marker = v === null || v === undefined ? '' : `<g data-marker=""><line x1="${X(v)}" y1="${y - 30}" x2="${X(v)}" y2="${y}" stroke="${marks ? (gradeActivity(spec, v).correct ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke-width="3"/><circle cx="${X(v)}" cy="${y - 34}" r="11" fill="${marks ? (gradeActivity(spec, v).correct ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke="#ffffff" stroke-width="2.5"/>${locked ? `<text x="${X(v)}" y="${y - 52}" text-anchor="middle" font-size="16" font-weight="700" fill="#16a34a">${spec.denominator ? fractionLabel(v, spec.denominator) : +v.toFixed(4)}</text>` : ''}</g>`;
+      const marker = v === null || v === undefined ? '' : `<g data-marker="" data-flip="marker"><line x1="${X(v)}" y1="${y - 30}" x2="${X(v)}" y2="${y}" stroke="${marks ? (gradeActivity(spec, v).correct ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke-width="3"/><circle cx="${X(v)}" cy="${y - 34}" r="11" fill="${marks ? (gradeActivity(spec, v).correct ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke="#ffffff" stroke-width="2.5"/>${locked ? `<text x="${X(v)}" y="${y - 52}" text-anchor="middle" font-size="16" font-weight="700" fill="#16a34a">${spec.denominator ? fractionLabel(v, spec.denominator) : +v.toFixed(4)}</text>` : ''}</g>`;
       body = `<div class="act-stage" data-nl=""><svg viewBox="0 0 ${W} ${H}"><line x1="${pad - 16}" y1="${y}" x2="${W - pad + 16}" y2="${y}" stroke="#57534e" stroke-width="2.5"/>${ticks.join('')}<rect x="0" y="0" width="${W}" height="${H}" fill="transparent" stroke="none" data-hit=""/>${marker}</svg></div><div class="act-caption">${locked ? '' : 'Tap or drag along the line to place the marker.'}</div>`;
       break;
     }
     case 'fraction_shade': {
       const on = new Set(draft as number[]);
       const N = spec.parts;
-      const fill = (i: number) => (on.has(i) ? (marks ? (gradeActivity(spec, [...on]).correct ? '#4ade80' : '#fb7185') : '#a78bfa') : '#ffffff');
+      const fill = (i: number) => (on.has(i) ? (marks && !(example && !exampleDone) ? (gradeActivity(spec, [...on]).correct ? '#4ade80' : '#fb7185') : '#a78bfa') : '#ffffff');
+      const flipKey = (i: number) => `data-flip="p${i}:${on.has(i)}"`;
       let shapes = '';
       if (spec.shape === 'circle') {
         const R = 110, cx = 140, cy = 130;
         shapes = Array.from({ length: N }, (_, i) => {
           const a0 = -Math.PI / 2 + (i / N) * 2 * Math.PI, a1 = -Math.PI / 2 + ((i + 1) / N) * 2 * Math.PI;
           const d = N === 1 ? `M${cx - R} ${cy}A${R} ${R} 0 1 1 ${cx + R} ${cy}A${R} ${R} 0 1 1 ${cx - R} ${cy}Z` : `M${cx} ${cy}L${cx + R * Math.cos(a0)} ${cy + R * Math.sin(a0)}A${R} ${R} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${cx + R * Math.cos(a1)} ${cy + R * Math.sin(a1)}Z`;
-          return `<path d="${d}" data-p="${i}" fill="${fill(i)}" stroke="#7c3aed" stroke-width="2.5" style="cursor:pointer"/>`;
+          return `<path d="${d}" data-p="${i}" ${flipKey(i)} fill="${fill(i)}" stroke="#7c3aed" stroke-width="2.5" style="cursor:pointer"/>`;
         }).join('');
         body = `<div class="act-stage" style="max-width:300px;margin:0 auto"><svg viewBox="0 0 280 260">${shapes}</svg></div>`;
       } else if (spec.shape === 'grid') {
         const cols = Math.ceil(Math.sqrt(N)), rows = Math.ceil(N / cols), S = Math.min(56, 480 / cols);
-        shapes = Array.from({ length: N }, (_, i) => `<rect x="${10 + (i % cols) * S}" y="${10 + Math.floor(i / cols) * S}" width="${S}" height="${S}" data-p="${i}" fill="${fill(i)}" stroke="#7c3aed" stroke-width="2" style="cursor:pointer"/>`).join('');
+        shapes = Array.from({ length: N }, (_, i) => `<rect x="${10 + (i % cols) * S}" y="${10 + Math.floor(i / cols) * S}" width="${S}" height="${S}" data-p="${i}" ${flipKey(i)} fill="${fill(i)}" stroke="#7c3aed" stroke-width="2" style="cursor:pointer"/>`).join('');
         body = `<div class="act-stage" style="max-width:${cols * S + 20}px;margin:0 auto"><svg viewBox="0 0 ${cols * S + 20} ${rows * S + 20}">${shapes}</svg></div>`;
       } else {
         const W = 560, H = 90, w = W / N;
-        shapes = Array.from({ length: N }, (_, i) => `<rect x="${10 + i * w}" y="10" width="${w}" height="${H}" data-p="${i}" fill="${fill(i)}" stroke="#7c3aed" stroke-width="2.5" style="cursor:pointer"/>`).join('');
+        shapes = Array.from({ length: N }, (_, i) => `<rect x="${10 + i * w}" y="10" width="${w}" height="${H}" data-p="${i}" ${flipKey(i)} fill="${fill(i)}" stroke="#7c3aed" stroke-width="2.5" style="cursor:pointer"/>`).join('');
         body = `<div class="act-stage"><svg viewBox="0 0 ${W + 20} ${H + 20}">${shapes}</svg></div>`;
       }
       body += `<div class="act-caption">${on.size} of ${N} parts shaded</div>`;
@@ -341,20 +357,20 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
       for (let y = Math.ceil(y0); y <= y1; y++) grid.push(`<line x1="${X(x0)}" y1="${Y(y)}" x2="${X(x1)}" y2="${Y(y)}" stroke="${y === 0 ? '#57534e' : '#e7e5e4'}" stroke-width="${y === 0 ? 2 : 1}"/>${y !== 0 && y1 - y0 <= 20 ? `<text x="${X(0) - 8}" y="${Y(y) + 4}" text-anchor="end" font-size="11" fill="#78716c">${y}</text>` : ''}`);
       const pts = draft as { x: number; y: number }[];
       const ok = (p: { x: number; y: number }) => spec.points.some((q) => Math.abs(q.x - p.x) <= (spec.tolerance ?? 0.25) && Math.abs(q.y - p.y) <= (spec.tolerance ?? 0.25));
-      const dots = pts.map((p) => `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="9" fill="${marks ? (ok(p) ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke="#ffffff" stroke-width="2.5"/>${marks ? `<text x="${X(p.x) + 12}" y="${Y(p.y) - 10}" font-size="14" font-weight="700" fill="${ok(p) ? '#16a34a' : '#dc2626'}">(${p.x}, ${p.y})</text>` : ''}`).join('');
+      const dots = pts.map((p) => `<circle data-flip="pt${p.x},${p.y}" cx="${X(p.x)}" cy="${Y(p.y)}" r="9" fill="${marks ? (ok(p) ? '#16a34a' : '#dc2626') : '#7c3aed'}" stroke="#ffffff" stroke-width="2.5"/>${marks ? `<text x="${X(p.x) + 12}" y="${Y(p.y) - 10}" font-size="14" font-weight="700" fill="${ok(p) ? '#16a34a' : '#dc2626'}">(${p.x}, ${p.y})</text>` : ''}`).join('');
       body = `<div class="act-stage" style="max-width:${S}px;margin:0 auto" data-pp=""><svg viewBox="0 0 ${S} ${S}">${grid.join('')}<text x="${X(x1) - 4}" y="${Y(0) - 8}" text-anchor="end" font-size="13" font-style="italic" fill="#57534e">x</text><text x="${X(0) + 8}" y="${Y(y1) + 14}" font-size="13" font-style="italic" fill="#57534e">y</text><rect x="0" y="0" width="${S}" height="${S}" fill="transparent" stroke="none"/>${dots}</svg></div><div class="act-caption">${locked ? '' : `Tap the grid to place ${spec.points.length === 1 ? 'the point' : `${spec.points.length} points`}; tap a point to remove it.`}</div>`;
       break;
     }
     case 'map_click': {
       const sel = draft as string[];
-      body = `<div class="act-stage" data-map="">${spec.svg}</div><div class="act-bank" style="margin-top:10px;min-height:40px">${sel.map((s) => `<span class="act-chip ${marks ? (spec.answers.includes(s) ? 'ok' : 'bad') : ''}" style="cursor:default">${escapeHtml(spec.names[s] ?? prettyPlace(s))}</span>`).join('') || `<span class="act-caption" style="margin:0">Tap a country on the map.</span>`}</div>`;
+      body = `<div class="act-stage" data-map="">${spec.svg}</div><div class="act-bank" style="margin-top:10px;min-height:40px">${sel.map((s) => `<span data-flip="m:${s}" class="act-chip ${marks ? (spec.answers.includes(s) ? 'ok' : 'bad') : ''}" style="cursor:default">${escapeHtml(spec.names[s] ?? prettyPlace(s))}</span>`).join('') || `<span class="act-caption" style="margin:0">Tap a country on the map.</span>`}</div>`;
       break;
     }
     case 'chem_balance': {
-      const k = draft as number[];
+      const k = draft as (number | null)[];
       const species = [...spec.reactants, ...spec.products];
-      const parts = species.map((f, i) => `${i === spec.reactants.length ? '<span style="padding:0 6px">→</span>' : i > 0 ? '<span>+</span>' : ''}<span style="display:inline-flex;align-items:center;gap:6px"><input type="number" min="1" max="30" class="act-coef" data-c="${i}" value="${k[i] ?? 1}" ${locked ? 'disabled' : ''}/><span>${prettyFormula(f)}</span></span>`).join('');
-      body = `<div class="act-eq">${parts}</div><div class="act-atoms" data-atoms="">${atomsHtml(spec, k)}</div>`;
+      const parts = species.map((f, i) => `${i === spec.reactants.length ? '<span style="padding:0 6px">→</span>' : i > 0 ? '<span>+</span>' : ''}<span style="display:inline-flex;align-items:center;gap:6px"><input type="number" min="1" max="30" class="act-coef" data-c="${i}" data-flip="k${i}:${k[i]}" value="${k[i] === null ? '' : k[i] ?? 1}" placeholder="?" ${locked ? 'disabled' : ''}/><span>${prettyFormula(f)}</span></span>`).join('');
+      body = `<div class="act-eq">${parts}</div><div class="act-atoms" data-atoms="">${atomsHtml(spec, k.map((v) => v ?? 1))}</div>`;
       break;
     }
     case 'label': {
@@ -372,16 +388,19 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
 
   // Footer: feedback, hint, explanation, actions.
   let fb = '';
-  if (c.status === 'correct') fb = `<div class="act-fb good"><span>✓</span><div>${escapeHtml(c.feedback ?? 'Correct!')}${c.explanation ? `<small>${richText(c.explanation)}</small>` : ''}</div></div>`;
+  if (example) {
+    const line = shown ? `<b>Step ${shown}.</b> ${richText(describeStep(spec, shown - 1))}` : 'Watch: this one gets solved step by step.';
+    fb = `<div class="act-fb ex"><div>${line}${exampleDone && c.explanation ? `<small>${richText(c.explanation)}</small>` : ''}</div></div>`;
+  } else if (c.status === 'correct') fb = `<div class="act-fb good"><span>✓</span><div>${escapeHtml(c.feedback ?? 'Correct!')}${c.explanation ? `<small>${richText(c.explanation)}</small>` : ''}</div></div>`;
   else if (c.status === 'revealed') fb = `<div class="act-fb info"><span>👀</span><div>Here's the answer.${c.explanation ? `<small>${richText(c.explanation)}</small>` : ''}</div></div>`;
   else if (c.status === 'wrong') {
     const hint = c.hints?.length ? c.hints[Math.min(c.attempts - 1, c.hints.length - 1)] : undefined;
     fb = `<div class="act-fb bad"><span>↺</span><div>${escapeHtml(c.feedback ?? 'Not quite.')} Try again!${hint ? `<small>💡 ${richText(hint)}</small>` : ''}</div></div>`;
   }
   const canShow = c.status === 'wrong' && c.attempts >= 2;
-  const actions = locked ? '' : `<div class="act-actions">${canShow ? '<button type="button" class="act-btn" data-act="show">Show me</button>' : ''}${autoSubmit ? '' : `<button type="button" class="act-btn act-primary" data-act="check" ${ready(spec, draft) ? '' : 'disabled'}>Check</button>`}</div>`;
+  const actions = example ? (host && !exampleDone ? `<div class="act-actions"><button type="button" class="act-btn" data-act="next">${shown ? 'Next step' : 'Start'} ›</button></div>` : '') : locked ? '' : `<div class="act-actions">${canShow ? '<button type="button" class="act-btn" data-act="show">Show me</button>' : ''}${autoSubmit ? '' : `<button type="button" class="act-btn act-primary" data-act="check" ${ready(spec, draft) ? '' : 'disabled'}>Check</button>`}</div>`;
   node.innerHTML =
-    `<div class="act-head">${c.step ? `<span class="act-step">${escapeHtml(c.step)}</span>` : ''}<span>${escapeHtml(spec.kind === 'choice' && spec.multiple ? 'Choose all that apply' : KIND_LABEL[spec.kind])}</span></div>` +
+    `<div class="act-head">${c.step ? `<span class="act-step">${escapeHtml(c.step)}</span>` : ''}${example ? `<span>Worked example</span><span class="act-step">${shown}/${total}</span>` : `<span>${escapeHtml(spec.kind === 'choice' && spec.multiple ? 'Choose all that apply' : KIND_LABEL[spec.kind])}</span>`}</div>` +
     `<div class="act-prompt">${richText(c.prompt)}</div><div class="act-body">${body}</div>` +
     (fb || actions ? `<div class="act-foot">${fb}${actions}</div>` : '');
 
@@ -398,6 +417,10 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
     });
   }
   host?.paint(node);
+  if (before) {
+    if (spec.kind === 'label' && node.isConnected) placeZones(node, spec); // final spots first, so chips glide to them
+    playFlip(node, before);
+  }
 
   // Celebrate / shake on a fresh result (not on re-renders of an old one).
   const key = `${c.status}:${c.attempts}`;
@@ -409,6 +432,8 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
   }
   if (!host || locked) {
     if (spec.kind === 'label') requestAnimationFrame(() => placeZones(node, spec));
+    // The student can step through an example themselves too.
+    if (host && example) node.querySelector('[data-act="next"]')?.addEventListener('click', () => host.commit({ ...c, shown: shown + 1 }));
     return;
   }
 
@@ -648,6 +673,47 @@ export function renderActivity(node: HTMLElement, el: ActivityElement, host?: Ac
       break;
     }
   }
+}
+
+/** Guided practice: the first steps are already done; undecided coefficients start at 1. */
+function givenStart(spec: ActivitySpec, given: number, seed: string): unknown {
+  const d = partialSolution(spec, given, seed);
+  return spec.kind === 'chem_balance' ? (d as (number | null)[]).map((v) => v ?? 1) : d;
+}
+
+/** Screen boxes of everything with a motion key, taken before a re-render. */
+function snapshot(node: HTMLElement): Map<string, DOMRect> {
+  const m = new Map<string, DOMRect>();
+  node.querySelectorAll('[data-flip]').forEach((e) => {
+    const k = e.getAttribute('data-flip')!;
+    if (!m.has(k)) m.set(k, e.getBoundingClientRect());
+  });
+  return m;
+}
+
+/** FLIP: things that moved glide from where they were; things that just appeared pop in. */
+function playFlip(node: HTMLElement, before: Map<string, DOMRect>): void {
+  if (!before.size || typeof Element.prototype.animate !== 'function') return;
+  const r = node.getBoundingClientRect();
+  const zoom = r.width / (node.offsetWidth || r.width || 1) || 1;
+  const seen = new Set<string>();
+  node.querySelectorAll<HTMLElement | SVGElement>('[data-flip]').forEach((e) => {
+    const k = e.getAttribute('data-flip')!;
+    if (seen.has(k)) return;
+    seen.add(k);
+    const old = before.get(k);
+    const svg = e instanceof SVGElement ? (e as SVGGraphicsElement).ownerSVGElement : null;
+    if (svg) Object.assign(e.style, { transformBox: 'fill-box', transformOrigin: 'center' });
+    if (old) {
+      const now = e.getBoundingClientRect();
+      const dx = old.left - now.left, dy = old.top - now.top;
+      if (Math.hypot(dx, dy) < 1) return;
+      const s = svg ? svg.getBoundingClientRect().width / (svg.viewBox.baseVal.width || 1) || 1 : zoom;
+      e.animate([{ transform: `translate(${dx / s}px, ${dy / s}px)` }, { transform: 'none' }], { duration: 450, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    } else {
+      e.animate([{ transform: 'scale(.6)', opacity: 0 }, { transform: 'scale(1.08)', opacity: 1, offset: 0.7 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'ease-out' });
+    }
+  });
 }
 
 function atomsHtml(spec: Extract<ActivitySpec, { kind: 'chem_balance' }>, k: number[]): string {

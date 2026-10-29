@@ -3,7 +3,7 @@
 
 import {
   SIM_PARAMS, buildColumnArithmetic, buildFractionModel, buildGloss, buildManipulatives, buildMap, buildNotation, buildNumberLine, buildPeriodicTable, buildPunnett,
-  electronConfiguration, fetchTopology, findElement, mapSlug, resolvePlaces, simFacts, simParams, validateActivity,
+  electronConfiguration, fetchTopology, findElement, mapSlug, resolvePlaces, simFacts, simParams, validateActivity, describeStep, solutionSteps,
   type ActivityContent, type ActivitySpec, type Board, type BoardElement, type ManipulativeSpec, type SimulationKind,
 } from '@ai-tutor/board';
 import { playNotes, sanitizeSvg, type BoardView } from '@ai-tutor/board/view';
@@ -24,7 +24,7 @@ const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite
 const arr = <T = unknown>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 const ref = (el: { id: string }) => `#${el.id}`;
 
-export const SUBJECT_TOOLS: ToolDefinition[] = [
+const ACTIVITY_TOOLS: ToolDefinition[] = [
   {
     type: 'function',
     name: 'ask_activity',
@@ -74,10 +74,26 @@ export const SUBJECT_TOOLS: ToolDefinition[] = [
         sketch_id: { type: 'string' },
         targets: { type: 'array', items: obj({ part: { type: 'string' }, label: { type: 'string' } }, ['part', 'label']) },
         extra: { type: 'array', items: { type: 'string' } },
+        given: { type: 'number', description: 'Guided practice ("we do"): how many solution steps start already done for the student (e.g. 2 of 4 items placed, 1 of 3 blanks filled, first coefficient set). Use right after a worked example, then drop it for the next question.' },
         placement,
       },
       ['kind', 'prompt'],
     ),
+  },
+];
+
+const askParams = ACTIVITY_TOOLS[0]!.parameters as { properties: Record<string, unknown>; required: string[] };
+const { given: _given, hints: _hints, step: _step, ...exampleProps } = askParams.properties;
+
+export const SUBJECT_TOOLS: ToolDefinition[] = [
+  ...ACTIVITY_TOOLS,
+  {
+    type: 'function',
+    name: 'show_example',
+    description:
+      'Worked example ("I do"): the same interactive card as ask_activity, with the same kinds and fields, but YOU solve it in front of the student. It starts unsolved (or with `reveal` steps shown); then call update_item {id, reveal: "next"} once per step while you explain that step out loud, so items glide into their slots, the marker moves, parts get shaded. ' +
+      'The result lists every step so you can narrate them. Use it to explain a method before asking: show_example, then ask_activity with `given` for a similar question, then ask_activity on its own. The student can also tap "Next step" themselves.',
+    parameters: obj({ ...exampleProps, reveal: { type: 'number', description: 'Steps already shown when it appears (default 0)' } }, askParams.required),
   },
   {
     type: 'function',
@@ -236,7 +252,8 @@ export function updateSubjectSketch(board: Board, el: BoardElement, args: Args):
 }
 
 export function executeSubjectTool(board: Board, view: BoardView, name: string, args: Args, place: Placer): Result | Promise<Result> {
-  if (name === 'ask_activity') return askActivity(board, view, args, place);
+  if (name === 'ask_activity') return askActivity(board, view, args, place, false);
+  if (name === 'show_example') return askActivity(board, view, args, place, true);
   if (name === 'run_simulation') {
     const kind = (['projectile', 'pendulum', 'spring', 'wave'].includes(str(args.kind)) ? str(args.kind) : 'projectile') as SimulationKind;
     const params = simParams(kind, (args.params as Args) ?? {});
@@ -272,7 +289,7 @@ export function executeSubjectTool(board: Board, view: BoardView, name: string, 
 
 const roundFacts = (f: Record<string, number>) => Object.fromEntries(Object.entries(f).map(([k, v]) => [k, +v.toFixed(2)]));
 
-async function askActivity(board: Board, view: BoardView, a: Args, place: Placer): Promise<Result> {
+async function askActivity(board: Board, view: BoardView, a: Args, place: Placer, example: boolean): Promise<Result> {
   const kind = str(a.kind);
   const prompt = str(a.prompt);
   if (!prompt) return { ok: false, error: 'prompt is required' };
@@ -339,17 +356,29 @@ async function askActivity(board: Board, view: BoardView, a: Args, place: Placer
   }
   const problems = validateActivity(spec);
   if (problems.length) return { ok: false, error: problems.join('; ') };
+  const total = solutionSteps(spec);
   const content: ActivityContent = {
     prompt, spec, status: 'open', attempts: 0,
-    hints: arr(a.hints).map(str).filter(Boolean).slice(0, 3),
+    hints: example ? undefined : arr(a.hints).map(str).filter(Boolean).slice(0, 3),
     explanation: a.explanation ? str(a.explanation) : undefined,
-    step: a.step ? str(a.step) : undefined,
+    step: !example && a.step ? str(a.step) : undefined,
+    ...(example ? { mode: 'example' as const, shown: Math.max(0, Math.min(total, num(a.reveal, 0))), focus: false } : {}),
+    ...(!example && a.given ? { given: Math.max(0, Math.min(total - 1, num(a.given, 0))) } : {}),
   };
-  // Reserve room for the tallest state (feedback + hint + "Show me"), so nothing below gets covered.
+  // Reserve room for the tallest state (feedback + hint + "Show me", or the last step with its explanation), so nothing below gets covered.
   const height = Math.max(
     view.measureActivity(content, width),
-    view.measureActivity({ ...content, status: 'wrong', attempts: 2, feedback: 'Not quite. 2 of 4 in the right place.', response: undefined }, width),
+    example
+      ? view.measureActivity({ ...content, shown: total }, width)
+      : view.measureActivity({ ...content, status: 'wrong', attempts: 2, feedback: 'Not quite. 2 of 4 in the right place.', response: undefined }, width),
   );
   const el = place({ type: 'activity', content }, { width, height });
-  return { ok: true, id: ref(el), note: 'The student is working on it. Encourage briefly, then call wait_for_student. You will get an [Activity] message with the result; do not say the answer.' };
+  if (example) {
+    return {
+      ok: true, id: ref(el), shown: content.shown, total,
+      steps: Array.from({ length: total }, (_, i) => `${i + 1}. ${describeStep(spec, i)}`),
+      note: 'Explain the setup, then for each step: say why, and call update_item {id, reveal: "next"} as you say it. After the last step, sum up the method, then give a similar ask_activity with `given`.',
+    };
+  }
+  return { ok: true, id: ref(el), ...(content.given ? { given: `${content.given} of ${total} steps already done` } : {}), note: 'The student is working on it. Encourage briefly, then call wait_for_student. You will get an [Activity] message with the result; do not say the answer.' };
 }

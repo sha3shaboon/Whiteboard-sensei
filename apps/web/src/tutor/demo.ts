@@ -15,6 +15,8 @@ export interface DemoStep {
 
 const at = (results: Results, i: number) => results[i] as R;
 const idOf = (r: Results, i: number) => at(r, i).id as string;
+/** Id from the most recent step that returned one (for runs of update_item on the same item). */
+const lastId = (r: Results) => (r.filter((x) => (x as R | undefined)?.id).at(-1) as R).id as string;
 
 // The eddy-current sketch, built up in layers. Each layer keeps the ids of the previous ones,
 // so only the new parts are drawn in.
@@ -131,6 +133,10 @@ export const DEMO: DemoStep[] = [
   { say: "And this is what coffee looks like on the plant: the beans are the seeds inside these red cherries.", tool: 'show_image', args: (r) => ({ query: 'Coffea arabica fruits', caption: 'Coffee cherries ripen from green to red; each holds two beans.', placement: `below ${idOf(r, 27)}` }) },
   { say: 'Now your turn. Learning sticks when you do it yourself.', tool: 'write_text', args: { text: 'Hands-on: fractions', style: 'title', placement: 'new section' } },
   { say: 'One half and two quarters cover exactly the same length: the pieces are smaller, but there are more of them.', tool: 'show_fractions', args: { fractions: [{ numerator: 1, denominator: 2 }, { numerator: 2, denominator: 4 }, { numerator: 4, denominator: 8 }], title: 'Same amount, different pieces' } },
+  { say: "Watch me do one first: three quarters of a bar with eight parts. Each quarter is two of the eighths.", tool: 'show_example', args: { kind: 'fraction_shade', prompt: 'Shade 3/4 of the bar.', parts: 8, shape: 'bar', numerator: 3, denominator: 4, explanation: '6 of 8 parts is 6/8, the same amount as 3/4.' } },
+  { say: 'One quarter: two parts.', tool: 'update_item', args: (r) => ({ id: lastId(r), reveal: 'next' }) },
+  { say: 'Two quarters: two more, so four parts. That is already half the bar.', tool: 'update_item', args: (r) => ({ id: lastId(r), reveal: 'next' }) },
+  { say: 'Three quarters: six of the eight parts. Six eighths and three quarters are the same amount.', tool: 'update_item', args: (r) => ({ id: lastId(r), reveal: 'next' }) },
   { say: 'Try it: shade one half of this bar. It has eight parts, so think about how many eighths make a half.', tool: 'ask_activity', args: { kind: 'fraction_shade', prompt: 'Shade 1/2 of the bar.', parts: 8, shape: 'bar', numerator: 1, denominator: 2, hints: ['Half of 8 parts is how many parts?'], explanation: '4 of 8 parts is 4/8, which equals 1/2.' } },
   { say: 'And physics you can play with: drag the angle and speed sliders and watch how far the ball lands.', tool: 'run_simulation', args: { kind: 'projectile', params: { speed: 20, angle: 45 }, controls: ['angle', 'speed'], placement: 'new section' } },
 ];
