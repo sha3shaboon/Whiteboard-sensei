@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- back page -->
+    <path
+        android:fillColor="#3A3D4A"
+        android:pathData="M42,30h26a4,4 0,0 1,4 4v38a4,4 0,0 1,-4 4h-26a4,4 0,0 1,-4 -4v-38a4,4 0,0 1,4 -4z" />
+    <!-- front page -->
+    <path
+        android:fillColor="#ECE7DD"
+        android:pathData="M36,36h26a4,4 0,0 1,4 4v38a4,4 0,0 1,-4 4h-26a4,4 0,0 1,-4 -4v-38a4,4 0,0 1,4 -4z" />
+    <!-- text lines -->
+    <path
+        android:fillColor="#9A968E"
+        android:pathData="M39,52h20v2.5h-20z M39,58h20v2.5h-20z M39,64h14v2.5h-14z" />
+    <!-- bookmark ribbon -->
+    <path
+        android:fillColor="#F2A65A"
+        android:pathData="M52,36h8v14l-4,-3.5l-4,3.5z" />
+</vector>
