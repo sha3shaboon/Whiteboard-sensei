@@ -24,7 +24,12 @@ sealed interface DownloadState {
     data class Failed(val message: String) : DownloadState
 }
 
-/** Fetches paper PDFs into the app's data folder so they can be read offline. */
+/**
+ * Fetches paper PDFs so they open in the in-app reader.
+ *
+ * Opening a paper to read puts its PDF in a small cache (the last [CACHE_LIMIT] papers).
+ * Saving it for offline, or writing on it, moves it to permanent storage and marks it in the library.
+ */
 class Downloads(
     private val http: HttpClient,
     private val fs: FileSystem,
@@ -32,22 +37,42 @@ class Downloads(
     private val store: Store,
     private val scope: CoroutineScope,
 ) {
-    private val dir = dataDir / "papers"
+    private val keptDir = dataDir / "papers"
+    private val cacheDir = dataDir / "cache"
     private val jobs = HashMap<String, Job>()
 
-    /** In-flight and failed downloads by paper id. Finished ones live in the library. */
+    /** In-flight and failed downloads by paper id. */
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
 
     init {
-        fs.createDirectories(dir)
+        fs.createDirectories(keptDir)
+        fs.createDirectories(cacheDir)
     }
 
-    fun fileFor(id: String): Path = dir / (id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".pdf")
+    private fun name(id: String) = id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".pdf"
+    private fun keptFile(id: String): Path = keptDir / name(id)
+    private fun cacheFile(id: String): Path = cacheDir / name(id)
 
-    fun isOnDevice(id: String): Boolean = fs.exists(fileFor(id))
+    /** Where the PDF is on this device: kept copy first, then the reading cache. */
+    fun fileFor(id: String): Path = keptFile(id).takeIf { fs.exists(it) } ?: cacheFile(id)
 
-    fun start(paper: Paper) {
+    fun isOnDevice(id: String): Boolean = fs.exists(keptFile(id)) || fs.exists(cacheFile(id))
+
+    fun isKept(id: String): Boolean = fs.exists(keptFile(id))
+
+    /**
+     * Gets the PDF onto the device. With [keep], it is stored permanently and marked offline in the
+     * library; otherwise it goes to the reading cache. [onReady] runs once the file is in place.
+     */
+    fun fetch(paper: Paper, keep: Boolean, onReady: () -> Unit = {}) {
+        if (keep && fs.exists(cacheFile(paper.id))) {
+            keepCached(paper); onReady(); return
+        }
+        if (isOnDevice(paper.id)) {
+            if (keep) keepCached(paper)
+            onReady(); return
+        }
         val url = paper.pdfUrl ?: return
         if (jobs[paper.id]?.isActive == true) return
         _active.update { it + (paper.id to DownloadState.Running(null)) }
@@ -61,27 +86,42 @@ class Downloads(
                         _active.update { it + (paper.id to DownloadState.Running(p)) }
                     }
                 }
-                if (!response.status.isSuccess()) error("The server answered ${response.status.value}")
+                if (!response.status.isSuccess()) error("The server answered ${response.status.value}. Try opening the paper's page instead.")
                 val bytes = response.readRawBytes()
                 if (bytes.size < 5 || bytes.decodeToString(0, 5) != "%PDF-") {
-                    error("This source only offers the paper as a web page. Open it online instead.")
+                    error("This source only offers the paper as a web page. Open the paper's page instead.")
                 }
                 withContext(Dispatchers.Default) {
-                    val target = fileFor(paper.id)
-                    val tmp = dir / (target.name + ".part")
+                    val target = if (keep) keptFile(paper.id) else cacheFile(paper.id)
+                    val tmp = target.parent!! / (target.name + ".part")
                     fs.write(tmp) { write(bytes) }
                     fs.atomicMove(tmp, target)
+                    if (!keep) pruneCache()
                 }
-                store.setDownloaded(paper, true)
+                if (keep) store.setDownloaded(paper, true)
                 _active.update { it - paper.id }
+                onReady()
             } catch (e: CancellationException) {
                 _active.update { it - paper.id }
                 throw e
             } catch (e: Exception) {
-                val message = e.message?.takeIf { it.length < 120 } ?: "Download failed. Check your connection."
+                val message = e.message?.takeIf { it.length < 140 } ?: "Download failed. Check your connection."
                 _active.update { it + (paper.id to DownloadState.Failed(message)) }
             }
         }
+    }
+
+    /** Move a cached PDF into permanent storage (when saved offline or annotated). */
+    fun keepCached(paper: Paper) {
+        val cached = cacheFile(paper.id)
+        if (fs.exists(cached) && !fs.exists(keptFile(paper.id))) runCatching { fs.atomicMove(cached, keptFile(paper.id)) }
+        if (fs.exists(keptFile(paper.id))) store.setDownloaded(paper, true)
+    }
+
+    private fun pruneCache() {
+        val files = fs.list(cacheDir).filter { it.name.endsWith(".pdf") }
+        if (files.size <= CACHE_LIMIT) return
+        files.sortedBy { fs.metadata(it).lastModifiedAtMillis ?: 0L }.take(files.size - CACHE_LIMIT).forEach { runCatching { fs.delete(it) } }
     }
 
     fun cancel(id: String) {
@@ -93,12 +133,15 @@ class Downloads(
 
     fun delete(paper: Paper) {
         cancel(paper.id)
-        runCatching { fs.delete(fileFor(paper.id)) }
+        runCatching { fs.delete(keptFile(paper.id)) }
+        runCatching { fs.delete(cacheFile(paper.id)) }
         store.setDownloaded(paper, false)
     }
 
-    /** Total size of downloaded PDFs, in bytes. */
-    fun usedBytes(): Long = runCatching {
-        fs.list(dir).sumOf { fs.metadata(it).size ?: 0L }
-    }.getOrDefault(0L)
+    /** Total size of PDFs kept offline, in bytes. */
+    fun usedBytes(): Long = runCatching { fs.list(keptDir).sumOf { fs.metadata(it).size ?: 0L } }.getOrDefault(0L)
+
+    companion object {
+        const val CACHE_LIMIT = 25
+    }
 }

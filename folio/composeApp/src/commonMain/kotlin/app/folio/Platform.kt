@@ -19,6 +19,9 @@ interface Platform {
     /** Phone: the share sheet. Desktop: copy to the clipboard. Returns a message to show, if any. */
     fun share(title: String, text: String): String?
 
+    /** Classifies pointers as stylus / eraser / finger / mouse, with pressure. */
+    val pen: app.folio.ink.PenInput get() = app.folio.ink.ComposePenInput
+
     /** Opens a downloaded PDF for in-app reading, or null if the file can't be read. */
     suspend fun openPdf(path: Path): PdfDocument?
 }

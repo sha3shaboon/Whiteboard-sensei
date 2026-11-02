@@ -24,6 +24,9 @@ class DesktopPlatform(override val dataDir: Path = defaultDataDir()) : Platform 
     override val name = "desktop"
     override val fileSystem: FileSystem = FileSystem.SYSTEM
 
+    /** On Windows, real pen pressure and eraser via the pointer API; elsewhere, what Compose reports. */
+    override val pen: app.folio.ink.PenInput = WindowsPen
+
     override fun openUrl(url: String) {
         runCatching {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {

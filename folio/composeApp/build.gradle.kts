@@ -47,6 +47,8 @@ kotlin {
             implementation("io.ktor:ktor-client-okhttp:$ktor")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
             implementation("org.apache.pdfbox:pdfbox:3.0.3")
+            // Windows pen pressure / eraser via the Win32 pointer API.
+            implementation("net.java.dev.jna:jna-platform:5.15.0")
         }
         desktopTest.dependencies {
             implementation(kotlin("test"))
@@ -63,8 +65,8 @@ android {
         applicationId = "app.folio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/androidMain/res")
@@ -91,10 +93,27 @@ compose.desktop {
     application {
         mainClass = "app.folio.MainKt"
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "Folio"
-            packageVersion = "1.0.2"
+            packageVersion = "1.1.0"
             description = "A library of new open-access research papers"
+            vendor = "Folio"
+            copyright = "Folio. Paper data from arXiv, Europe PMC and OpenAlex."
+            // suggestRuntimeModules, plus TLS elliptic curves (HTTPS) and DNS for the paper APIs.
+            modules("java.instrument", "java.management", "jdk.unsupported", "jdk.crypto.ec", "java.naming")
+
+            windows {
+                iconFile.set(rootProject.file("icons/folio.ico"))
+                menu = true
+                menuGroup = "Folio"
+                shortcut = true
+                // Installs for the current user: no administrator prompt.
+                perUserInstall = true
+                dirChooser = true
+                // Keep this constant so new versions upgrade the installed app instead of duplicating it.
+                upgradeUuid = "6F1A4D5E-2B8C-4E3A-9D17-0C5B8A7E21F4"
+            }
+            linux { iconFile.set(rootProject.file("icons/folio.png")) }
         }
     }
 }

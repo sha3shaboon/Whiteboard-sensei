@@ -51,16 +51,18 @@ internal suspend fun HttpClient.getText(url: String): String {
     return response.bodyAsText()
 }
 
-private val tagRegex = Regex("<[^>]+>")
+/** Only things shaped like HTML tags, so text such as "p < 0.05" survives. */
+private val tagRegex = Regex("</?[a-zA-Z][a-zA-Z0-9]*(\\s[^<>]*)?/?>")
 private val latexCommand = Regex("""\\(emph|textit|textbf|mathrm|mathbf|texttt|mathcal)\{([^}]*)\}""")
 private val whitespace = Regex("\\s+")
 
 /** Removes HTML tags, entities and the most common inline LaTeX so text reads cleanly. */
 internal fun cleanText(raw: String): String = raw
-    .replace(tagRegex, " ")
+    // Decode escaped tags first: some titles arrive as "&lt;i&gt;Acropora&lt;/i&gt;".
+    .replace("&lt;", "<").replace("&gt;", ">")
+    .replace(tagRegex, "")
     .replace(latexCommand, "$2")
-    .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
-    .replace("&#39;", "'").replace("&apos;", "'")
+    .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&nbsp;", " ")
     .replace(whitespace, " ")
     .trim()
 

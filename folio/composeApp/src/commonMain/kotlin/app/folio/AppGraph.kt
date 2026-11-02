@@ -2,6 +2,7 @@ package app.folio
 
 import app.folio.data.Curiosity
 import app.folio.data.Downloads
+import app.folio.data.NotesStore
 import app.folio.data.Paper
 import app.folio.data.PaperRepository
 import app.folio.data.Store
@@ -46,6 +47,11 @@ class AppGraph(val platform: Platform, val scope: CoroutineScope) {
     )
 
     val downloads = Downloads(http, platform.fileSystem, platform.dataDir, store, scope)
+
+    val notes = NotesStore(platform.fileSystem, platform.dataDir, json, scope)
+
+    /** Pen, colour and width choices, shared by every paper you open. */
+    val ink = app.folio.ink.InkSettings()
 
     val home = HomePresenter(this)
     val search = SearchPresenter(this)

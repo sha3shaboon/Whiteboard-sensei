@@ -14,7 +14,7 @@ sealed interface Screen {
     data class TopicFeed(val topic: Topic) : Screen
     data object ForYou : Screen
     data class PaperDetail(val id: String) : Screen
-    data class Reader(val id: String) : Screen
+    data class Reader(val id: String, val notesOpen: Boolean = false) : Screen
 }
 
 enum class Tab(val root: Screen) { HOME(Screen.Home), SEARCH(Screen.Search), INTERESTS(Screen.Interests), LIBRARY(Screen.Library()) }

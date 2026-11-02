@@ -127,7 +127,7 @@ private fun ScreenContent(screen: Screen) {
         is Screen.TopicFeed -> TopicFeedScreen(screen.topic)
         Screen.ForYou -> TopicFeedScreen(null)
         is Screen.PaperDetail -> PaperScreen(screen.id)
-        is Screen.Reader -> ReaderScreen(screen.id)
+        is Screen.Reader -> ReaderScreen(screen.id, screen.notesOpen)
     }
 }
 

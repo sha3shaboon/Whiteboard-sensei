@@ -5,6 +5,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import app.folio.data.ThemeMode
@@ -33,6 +34,8 @@ class ScreenshotTour {
     private val out = System.getProperty("shotsDir")?.let(::File)
 
     companion object {
+        /** The paper downloaded in c_, reused by the ink tests. */
+        var readPaperId: String? = null
         private val dataDir = Files.createTempDirectory("folio-tour").toString().toPath()
         private val graph by lazy {
             AppGraph(DesktopPlatform(dataDir), CoroutineScope(SupervisorJob() + Dispatchers.Default)).apply {
@@ -77,7 +80,8 @@ class ScreenshotTour {
     @Test fun c_phonePaper() {
         val paper = graph.home.feed.state.value.papers.firstOrNull { it.pdfUrl?.contains("arxiv") == true } ?: return
         graph.store.save(paper)
-        graph.downloads.start(paper)
+        graph.downloads.fetch(paper, keep = true)
+        readPaperId = paper.id
         shot("phone-paper", 400, 860, start = Screen.PaperDetail(paper.id), ready = { graph.store.entry(paper.id)?.downloaded == true }, settle = 800)
         shot("desktop-paper", 1360, 860, scale = 1.5f, start = Screen.PaperDetail(paper.id))
         renderFirstPage(paper.id)
@@ -91,6 +95,57 @@ class ScreenshotTour {
         println("pdf pages=${doc.pageCount} ratio=${doc.aspectRatio(0)}")
         ImageIO.write(doc.render(0, 900).toAwtImage(), "png", File(out, "pdf-page1.png"))
         doc.close()
+    }
+
+    /** Writes on the page with injected pointer input, then checks the strokes were saved. */
+    @Test fun ca_ink() {
+        val id = readPaperId ?: return
+        assumeTrue(out != null && System.getProperty("live") == "true")
+        // A handwritten-looking note with pen pressure, as a Surface Pen would leave it.
+        val wave = buildList {
+            for (i in 0..60) {
+                val t = i / 60f
+                addAll(listOf(0.12f + t * 0.42f, 0.385f + 0.012f * kotlin.math.sin(t * 25f), 0.3f + 0.7f * kotlin.math.sin(t * 3.1f).coerceAtLeast(0f)))
+            }
+        }
+        graph.notes.save(
+            id,
+            app.folio.data.PaperNotes(
+                listOf(
+                    app.folio.data.InkStroke(0, app.folio.data.InkTool.HIGHLIGHTER, app.folio.ink.HighlighterColors[0], app.folio.ink.HIGHLIGHTER_WIDTH, listOf(0.17f, 0.335f, 1f, 0.84f, 0.335f, 1f)),
+                    app.folio.data.InkStroke(0, app.folio.data.InkTool.PEN, app.folio.ink.PenColors[2], 0.0042f, wave),
+                ),
+                text = "Key idea: the recipient is chosen *after* the shares go out.\n\nQ: how does this compare to quantum secret sharing of states?",
+            ),
+        )
+        Thread.sleep(300)
+        graph.ink.touchDraws = true
+        graph.ink.tool = app.folio.ink.Tool.PEN
+        graph.ink.penColor = app.folio.ink.PenColors[1]
+        runDesktopComposeUiTest(800, 1720) {
+            setContent { CompositionLocalProvider(LocalDensity provides Density(2f)) { App(graph, Screen.Reader(id)) } }
+            repeat(24) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            // Circle something on page 1 with the "mouse".
+            onRoot().performMouseInput {
+                val cx = 560f; val cy = 900f
+                moveTo(androidx.compose.ui.geometry.Offset(cx + 120f, cy)); press()
+                for (i in 1..40) {
+                    val a = i / 40f * 6.6f
+                    moveTo(androidx.compose.ui.geometry.Offset(cx + 120f * kotlin.math.cos(a), cy + 45f * kotlin.math.sin(a)))
+                }
+                release()
+            }
+            repeat(8) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+        }
+        Thread.sleep(1200)
+        val saved = graph.notes.load(id)
+        println("ink strokes saved: ${saved.strokes.size} (expected 3)")
+        kotlin.test.assertEquals(3, saved.strokes.size, "the mouse stroke should be saved with the seeded ones")
+        graph.ink.touchDraws = false
+        shot("phone-reader-ink", 400, 860, start = Screen.Reader(id), settle = 6000)
+        shot("phone-reader-notes", 400, 860, start = Screen.Reader(id, notesOpen = true), settle = 6000)
+        shot("desktop-reader-ink", 1360, 860, scale = 1.5f, start = Screen.Reader(id, notesOpen = true), settle = 6000)
+        shot("phone-paper-notes", 400, 860, start = Screen.PaperDetail(id), settle = 800)
     }
 
     @Test fun d_library() {

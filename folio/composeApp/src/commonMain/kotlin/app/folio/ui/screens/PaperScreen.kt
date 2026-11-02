@@ -31,7 +31,7 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
-import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -92,7 +92,6 @@ fun PaperScreen(id: String) {
     }
     val field = remember(paper.id) { Field.of(paper) }
     val download = downloads[paper.id]
-    val onDevice = entry?.downloaded == true && app.graph.downloads.isOnDevice(paper.id)
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // Hero on the beige band
@@ -118,7 +117,7 @@ fun PaperScreen(id: String) {
                     Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.Top) {
                         PaperCover(paper, Modifier.width(230.dp), elevation = 18)
                         Spacer(Modifier.width(36.dp))
-                        Column(Modifier.weight(1f).widthIn(max = 720.dp)) { Headline(paper, field, entry) ; Spacer(Modifier.height(24.dp)); Actions(app, paper, entry, download, onDevice) }
+                        Column(Modifier.weight(1f).widthIn(max = 720.dp)) { Headline(paper, field, entry) ; Spacer(Modifier.height(24.dp)); Actions(app, paper, entry, download) }
                     }
                 } else {
                     Column(Modifier.padding(horizontal = 12.dp)) {
@@ -126,13 +125,15 @@ fun PaperScreen(id: String) {
                         Spacer(Modifier.height(24.dp))
                         Headline(paper, field, entry)
                         Spacer(Modifier.height(20.dp))
-                        Actions(app, paper, entry, download, onDevice)
+                        Actions(app, paper, entry, download)
                     }
                 }
             }
         }
 
         Column(Modifier.padding(horizontal = pad, vertical = 24.dp).widthIn(max = 860.dp)) {
+            NotesCard(app, paper)
+            Spacer(Modifier.height(16.dp))
             Surface(shape = RoundedCornerShape(22.dp), color = Folio.colors.card, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(22.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -209,50 +210,65 @@ private fun Authors(authors: List<String>) {
 }
 
 @Composable
-private fun Actions(app: AppScope, paper: Paper, entry: SavedPaper?, download: DownloadState?, onDevice: Boolean) {
+private fun Actions(app: AppScope, paper: Paper, entry: SavedPaper?, download: DownloadState?) {
     val pdf = paper.pdfUrl
+    val downloads = app.graph.downloads
+    val onDevice = downloads.isOnDevice(paper.id)
+    val kept = entry?.downloaded == true && downloads.isKept(paper.id)
+    val running = download as? DownloadState.Running
+
+    fun openReader() {
+        val here = app.nav.current.screen
+        downloads.fetch(paper, keep = false) {
+            // Only jump to the reader if the reader is still looking at this paper.
+            if (app.nav.current.screen == here) app.nav.push(Screen.Reader(paper.id))
+        }
+    }
+
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         when {
-            onDevice -> Button(
-                onClick = { app.nav.push(Screen.Reader(paper.id)) },
+            running != null -> Button(
+                onClick = { downloads.cancel(paper.id) },
                 shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp),
-            ) {
-                Icon(Icons.AutoMirrored.Outlined.MenuBook, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                Text(if ((entry?.lastPage ?: 0) > 0) "Continue reading" else "Read offline")
-            }
-            download is DownloadState.Running -> Button(
-                onClick = { app.graph.downloads.cancel(paper.id) },
-                shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)),
             ) {
                 CircularProgressIndicator(
-                    progress = { download.progress ?: 0f }, modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+                    progress = { running.progress ?: 0f }, modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.onPrimary, trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
                 )
                 Spacer(Modifier.width(10.dp))
-                Text(download.progress?.let { "Downloading ${(it * 100).toInt()}%" } ?: "Downloading…")
+                Text(running.progress?.let { "Opening ${(it * 100).toInt()}%" } ?: "Opening…")
                 Spacer(Modifier.width(6.dp))
                 Icon(Icons.Outlined.Close, "Cancel", Modifier.size(16.dp))
             }
-            pdf != null -> Button(
-                onClick = { app.graph.downloads.start(paper) },
-                shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp),
-            ) {
-                Icon(Icons.Outlined.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                Text("Download to read")
+            pdf != null || onDevice -> Button(onClick = ::openReader, shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.MenuBook, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text(if ((entry?.lastPage ?: 0) > 0) "Continue reading" else "Read")
+            }
+            else -> Button(onClick = { app.graph.platform.openUrl(paper.landingUrl) }, shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text("Read on the web")
             }
         }
-        OutlinedButton(
-            onClick = { app.graph.platform.openUrl(if (pdf != null && !onDevice) pdf else paper.landingUrl) },
-            shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp),
-        ) {
-            Icon(Icons.AutoMirrored.Outlined.OpenInNew, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-            Text(if (pdf == null) "Read online" else "Open online")
+        if (pdf != null || onDevice) {
+            OutlinedButton(
+                onClick = {
+                    if (kept) { downloads.delete(paper); app.toast("Removed from this device") }
+                    else downloads.fetch(paper, keep = true) { app.toast("Saved for offline reading") }
+                },
+                enabled = running == null,
+                shape = RoundedCornerShape(14.dp), modifier = Modifier.height(50.dp),
+            ) {
+                Icon(if (kept) Icons.Outlined.CloudDone else Icons.Outlined.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                Text(if (kept) "Offline" else "Save offline")
+            }
+        }
+        IconButton(onClick = { app.graph.platform.openUrl(paper.landingUrl) }) {
+            Icon(Icons.AutoMirrored.Outlined.OpenInNew, "Open the paper's web page", tint = Folio.colors.muted)
         }
     }
-    if (download is DownloadState.Running && download.progress != null) {
+    if (running?.progress != null) {
         Spacer(Modifier.height(10.dp))
-        LinearProgressIndicator(progress = { download.progress }, modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(), color = MaterialTheme.colorScheme.secondary)
+        LinearProgressIndicator(progress = { running.progress }, modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(), color = MaterialTheme.colorScheme.secondary)
     }
     if (download is DownloadState.Failed) {
         Spacer(Modifier.height(12.dp))
@@ -260,21 +276,40 @@ private fun Actions(app: AppScope, paper: Paper, entry: SavedPaper?, download: D
             Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
             Spacer(Modifier.width(8.dp))
             Text(download.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.weight(1f, fill = false))
-            IconButton(onClick = { app.graph.downloads.dismissError(paper.id) }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, "Dismiss", Modifier.size(14.dp)) }
+            TextButton(onClick = { app.graph.platform.openUrl(paper.landingUrl) }) { Text("Open page", style = MaterialTheme.typography.labelMedium) }
+            IconButton(onClick = { downloads.dismissError(paper.id) }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, "Dismiss", Modifier.size(14.dp)) }
         }
     }
-    if (onDevice) {
+    if (pdf == null && !onDevice) {
         Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.CloudDone, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(6.dp))
-            Text("Saved on this device", style = MaterialTheme.typography.bodySmall, color = Folio.colors.muted)
-            TextButton(onClick = { app.graph.downloads.delete(paper); app.toast("Download removed") }) {
-                Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Remove", style = MaterialTheme.typography.labelMedium)
+        Text("This source doesn't offer a PDF, so it opens on the publisher's site.", style = MaterialTheme.typography.bodySmall, color = Folio.colors.muted)
+    }
+}
+
+/** Preview of your handwriting and typed notes, with a way back into the reader. */
+@Composable
+private fun NotesCard(app: AppScope, paper: Paper) {
+    val annotated by app.graph.notes.annotated.collectAsState()
+    if (paper.id !in annotated) return
+    val notes = remember(paper.id, annotated) { app.graph.notes.load(paper.id) }
+    Surface(
+        onClick = { app.nav.push(Screen.Reader(paper.id)) },
+        shape = RoundedCornerShape(22.dp), color = Folio.colors.card, modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(22.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Draw, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.width(8.dp))
+                Text("YOUR NOTES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
+                val pages = notes.strokes.map { it.page }.distinct().size
+                if (notes.strokes.isNotEmpty()) Text("${notes.strokes.size} pen strokes on $pages ${if (pages == 1) "page" else "pages"}", style = MaterialTheme.typography.labelMedium, color = Folio.colors.muted)
             }
+            if (notes.text.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(notes.text, style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text("Open in the reader", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         }
-    } else if (pdf == null) {
-        Spacer(Modifier.height(8.dp))
-        Text("This source doesn't offer a PDF to download.", style = MaterialTheme.typography.bodySmall, color = Folio.colors.muted)
     }
 }
