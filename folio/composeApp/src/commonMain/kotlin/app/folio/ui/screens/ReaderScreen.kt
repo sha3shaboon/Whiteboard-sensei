@@ -52,7 +52,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.PanTool
-import androidx.compose.material.icons.outlined.StickyNote2
+import androidx.compose.material.icons.automirrored.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.CircularProgressIndicator
@@ -240,7 +240,7 @@ private fun TopBar(
             if (app.wide) Text("${(zoomSteps[zoom] * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(44.dp))
             IconButton(onClick = { if (zoom < zoomSteps.lastIndex) onZoom(zoom + 1) }, enabled = zoom < zoomSteps.lastIndex) { Icon(Icons.Outlined.ZoomIn, "Zoom in") }
             IconButton(onClick = onNotes) {
-                Icon(Icons.Outlined.StickyNote2, "Notes", tint = if (notesOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground)
+                Icon(Icons.AutoMirrored.Outlined.StickyNote2, "Notes", tint = if (notesOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground)
             }
         }
     }

@@ -64,6 +64,11 @@ object WindowsPen : PenInput {
         }
     }
 
+    /** Raw PEN_FLAGS from the last pen message, for diagnostics and tests. */
+    @Volatile
+    var lastPenFlags: Int = 0
+        private set
+
     /** The most recent pen/touch reading from Windows, for diagnostics and tests. */
     fun lastReading(): PointerSample? = state?.let { PointerSample(it.kind, it.pressure) }
 
@@ -111,6 +116,7 @@ object WindowsPen : PenInput {
             PT_PEN -> {
                 val info = PointerPenInfo()
                 if (!Win32.INSTANCE.GetPointerPenInfo(id, info)) return
+                lastPenFlags = info.penFlags
                 val eraser = info.penFlags and (PEN_FLAG_ERASER or PEN_FLAG_INVERTED) != 0
                 // The barrel button also erases while held, like most note apps.
                 val barrel = info.penFlags and PEN_FLAG_BARREL != 0
