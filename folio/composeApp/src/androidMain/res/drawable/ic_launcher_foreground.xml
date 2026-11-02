@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- three covers standing on a shelf, inside the 66dp safe zone -->
+    <path android:fillColor="#E2A9F1" android:pathData="M33,40h12a2,2 0,0 1,2 2v28h-16v-28a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#F26B3A" android:pathData="M49,34h12a2,2 0,0 1,2 2v34h-16v-34a2,2 0,0 1,2 -2z" />
+    <path android:fillColor="#F5F3EE" android:pathData="M66,37.5l10.8,-3.1a2,2 0,0 1,2.5 1.4l9.2,32.2l-15.4,4.4l-9.2,-32.2a2,2 0,0 1,1.4 -2.5z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M51,40h8v2h-8z M51,44h6v2h-6z" />
+    <path android:fillColor="#F5F3EE" android:pathData="M28,72h52v3h-52z" />
+</vector>
