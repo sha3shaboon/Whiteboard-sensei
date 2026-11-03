@@ -6,6 +6,8 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performMouseInput
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import app.folio.data.ThemeMode
@@ -112,7 +114,7 @@ class ScreenshotTour {
             id,
             app.folio.data.PaperNotes(
                 listOf(
-                    app.folio.data.InkStroke(0, app.folio.data.InkTool.HIGHLIGHTER, app.folio.ink.HighlighterColors[0], app.folio.ink.HIGHLIGHTER_WIDTH, listOf(0.17f, 0.335f, 1f, 0.84f, 0.335f, 1f)),
+                    app.folio.data.InkStroke(0, app.folio.data.InkTool.HIGHLIGHTER, app.folio.ink.HighlighterColors[0], 0.02f, listOf(0.17f, 0.335f, 1f, 0.84f, 0.335f, 1f)),
                     app.folio.data.InkStroke(0, app.folio.data.InkTool.PEN, app.folio.ink.PenColors[2], 0.0042f, wave),
                 ),
                 text = "Key idea: the recipient is chosen *after* the shares go out.\n\nQ: how does this compare to quantum secret sharing of states?",
@@ -146,6 +148,69 @@ class ScreenshotTour {
         shot("phone-reader-notes", 400, 860, start = Screen.Reader(id, notesOpen = true), settle = 6000)
         shot("desktop-reader-ink", 1360, 860, scale = 1.5f, start = Screen.Reader(id, notesOpen = true), settle = 6000)
         shot("phone-paper-notes", 400, 860, start = Screen.PaperDetail(id), settle = 800)
+    }
+
+    /** Whiteboard beside the paper: write on it, check it lands on the board, and capture the layouts. */
+    @Test fun cb_board() {
+        val id = readPaperId ?: return
+        assumeTrue(out != null && System.getProperty("live") == "true")
+        val before = graph.notes.load(id)
+        // A worked example on the board: axes, a curve, and a boxed result, drawn like a pen would.
+        fun line(x0: Float, y0: Float, x1: Float, y1: Float, n: Int = 20) = buildList {
+            for (i in 0..n) { val t = i / n.toFloat(); addAll(listOf(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 0.6f + 0.3f * kotlin.math.sin(t * 3f))) }
+        }
+        val curve = buildList {
+            for (i in 0..60) { val t = i / 60f; val x = 0.12f + t * 0.7f; addAll(listOf(x, 0.62f - 0.42f * (t - 0.5f) * (t - 0.5f) * 4f * 0.5f - 0.05f * t, 0.4f + 0.6f * t)) }
+        }
+        val ink = app.folio.data.InkTool.PEN
+        val black = app.folio.ink.PenColors[0]
+        val blue = app.folio.ink.PenColors[1]
+        val board = listOf(
+            app.folio.data.InkStroke(0, ink, black, 0.003f, line(0.1f, 0.7f, 0.9f, 0.7f), board = true),
+            app.folio.data.InkStroke(0, ink, black, 0.003f, line(0.12f, 0.72f, 0.12f, 0.12f), board = true),
+            app.folio.data.InkStroke(0, ink, blue, 0.005f, curve, board = true),
+            app.folio.data.InkStroke(0, app.folio.data.InkTool.HIGHLIGHTER, app.folio.ink.HighlighterColors[1], 0.03f, listOf(0.2f, 0.85f, 1f, 0.75f, 0.85f, 1f), board = true, pressure = 0f),
+        )
+        graph.notes.save(id, before.copy(strokes = before.strokes + board, boardStyle = app.folio.data.BoardStyle.GRID, boardSheets = 2))
+        Thread.sleep(300)
+
+        // Write on the board (bottom half in portrait split) with the "mouse".
+        graph.ink.touchDraws = true
+        graph.ink.tool = app.folio.ink.Tool.PEN
+        graph.ink.penColor = app.folio.ink.PenColors[2]
+        runDesktopComposeUiTest(800, 1720) {
+            setContent { CompositionLocalProvider(LocalDensity provides Density(2f)) { App(graph, Screen.Reader(id, board = app.folio.ui.reader.BoardMode.SPLIT)) } }
+            repeat(16) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            onRoot().performMouseInput {
+                moveTo(androidx.compose.ui.geometry.Offset(200f, 1400f)); press()
+                for (i in 1..30) moveTo(androidx.compose.ui.geometry.Offset(200f + i * 12f, 1400f + 40f * kotlin.math.sin(i / 4f)))
+                release()
+            }
+            repeat(8) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+        }
+        Thread.sleep(1200)
+        val saved = graph.notes.load(id)
+        val boardCount = saved.strokes.count { it.board }
+        println("board strokes saved: $boardCount (expected ${board.size + 1}), paper strokes: ${saved.strokes.count { !it.board }}")
+        kotlin.test.assertEquals(board.size + 1, boardCount, "the drawn stroke should land on the whiteboard")
+        kotlin.test.assertEquals(before.strokes.count { !it.board }, saved.strokes.count { !it.board }, "the paper's ink is untouched")
+        graph.ink.touchDraws = false
+
+        shot("phone-board-split", 400, 860, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.SPLIT), settle = 5000)
+        shot("phone-board-full", 400, 860, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.FULL), settle = 2000)
+        shot("desktop-board-split", 1360, 860, scale = 1.5f, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.SPLIT), settle = 5000)
+
+        // The pen settings panel, opened through its real button.
+        graph.ink.penSize = 0.0075f
+        runDesktopComposeUiTest(800, 1720) {
+            setContent { CompositionLocalProvider(LocalDensity provides Density(2f)) { App(graph, Screen.Reader(id)) } }
+            repeat(16) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            onNodeWithContentDescription("Pen settings: colour, thickness, pressure").performClick()
+            repeat(4) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", File(out, "phone-pen-settings.png"))
+            println("saved phone-pen-settings.png")
+        }
+        graph.ink.penSize = 0.0042f
     }
 
     @Test fun d_library() {

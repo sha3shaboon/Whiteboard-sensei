@@ -18,9 +18,15 @@ Papers come from three free sources:
 
 ![Desktop: reading with pen notes](docs/screenshots/desktop-reader-ink.png)
 
+![Desktop: whiteboard beside the paper](docs/screenshots/desktop-board-split.png)
+
 | Phone: Discover | Paper | Reading with a pen | Notes |
 |---|---|---|---|
 | ![](docs/screenshots/phone-home.png) | ![](docs/screenshots/phone-paper.png) | ![](docs/screenshots/phone-reader-ink.png) | ![](docs/screenshots/phone-reader-notes.png) |
+
+| Whiteboard split | Whiteboard full screen | Pen settings |
+|---|---|---|
+| ![](docs/screenshots/phone-board-split.png) | ![](docs/screenshots/phone-board-full.png) | ![](docs/screenshots/phone-pen-settings.png) |
 
 More in [docs/screenshots](docs/screenshots), including dark mode and the full Discover page.
 
@@ -44,9 +50,17 @@ More in [docs/screenshots](docs/screenshots), including dark mode and the full D
 - **Built-in PDF reader.** **Read** opens the paper inside Folio; no browser or external viewer.
   The PDF is fetched in the background into a small cache (the last 25 papers). Zoom, page
   memory, and papers you've read are marked read.
-- **Write on papers.** Pen (6 colours, 3 widths, pressure-sensitive), highlighter (5 colours),
-  and an eraser that removes whole strokes. The stylus's eraser end and barrel button erase
-  too. Undo/redo with buttons or Ctrl+Z / Ctrl+Y.
+- **Write on papers.** Pen (6 colours), highlighter (5 colours) and an eraser that removes whole
+  strokes. The stylus's eraser end and barrel button erase too. Undo/redo with buttons or
+  Ctrl+Z / Ctrl+Y.
+  - *Pen settings* (the sliders button, or tap the selected tool again): a thickness slider with
+    quick presets, pressure sensitivity from off (even line) to full, highlighter thickness,
+    eraser size, and a live preview stroke. Choices are remembered between launches.
+- **Whiteboard.** The board button in the reader opens scratch paper beside the paper: side by
+  side on wide screens, stacked on a phone in portrait. Drag the divider to resize, or expand
+  the board to full screen. Sheets come in grid, lined, dotted or blank. Add as many as you need,
+  or clear one (undo brings it back). The whiteboard uses the same pens and undo as the paper,
+  and is saved with it.
   - *Palm-friendly by default:* only the stylus writes, while fingers and mouse scroll. The ✋
     button lets fingers and mouse write too (for devices without a pen).
   - *Typed notes:* a notes panel per paper, with a list of the pages you've written on.

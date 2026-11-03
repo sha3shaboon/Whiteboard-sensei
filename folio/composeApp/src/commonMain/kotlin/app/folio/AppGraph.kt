@@ -51,7 +51,7 @@ class AppGraph(val platform: Platform, val scope: CoroutineScope) {
     val notes = NotesStore(platform.fileSystem, platform.dataDir, json, scope)
 
     /** Pen, colour and width choices, shared by every paper you open. */
-    val ink = app.folio.ink.InkSettings()
+    val ink = app.folio.ink.InkSettings(store.settings.value.ink)
 
     val home = HomePresenter(this)
     val search = SearchPresenter(this)

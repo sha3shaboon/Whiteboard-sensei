@@ -301,8 +301,14 @@ private fun NotesCard(app: AppScope, paper: Paper) {
                 Icon(Icons.Outlined.Draw, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                 Spacer(Modifier.width(8.dp))
                 Text("YOUR NOTES", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
-                val pages = notes.strokes.map { it.page }.distinct().size
-                if (notes.strokes.isNotEmpty()) Text("${notes.strokes.size} pen strokes on $pages ${if (pages == 1) "page" else "pages"}", style = MaterialTheme.typography.labelMedium, color = Folio.colors.muted)
+                val onPaper = notes.strokes.filter { !it.board }
+                val pages = onPaper.map { it.page }.distinct().size
+                val onBoard = notes.strokes.count { it.board }
+                val summary = listOfNotNull(
+                    if (pages > 0) "$pages ${if (pages == 1) "page" else "pages"} marked up" else null,
+                    if (onBoard > 0) "whiteboard" else null,
+                ).joinToString(" · ")
+                if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.labelMedium, color = Folio.colors.muted)
             }
             if (notes.text.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))

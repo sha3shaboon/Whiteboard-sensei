@@ -1,4 +1,4 @@
-package app.folio.ui.screens
+package app.folio.ui.reader
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -9,10 +9,10 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,38 +39,33 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Redo
-import androidx.compose.material.icons.automirrored.outlined.Undo
-import androidx.compose.material.icons.outlined.BorderColor
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.automirrored.outlined.StickyNote2
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -84,7 +79,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -93,20 +87,16 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.folio.AppScope
 import app.folio.LocalApp
 import app.folio.PdfDocument
-import app.folio.ink.EraserIcon
-import app.folio.ink.HighlighterColors
 import app.folio.ink.InkSession
 import app.folio.ink.InkSettings
-import app.folio.ink.PenColors
-import app.folio.ink.Tool
 import app.folio.ink.drawStroke
 import app.folio.ink.drawStrokes
 import app.folio.ink.inkInput
@@ -121,10 +111,16 @@ import kotlinx.datetime.Clock
 
 private val zoomSteps = listOf(1f, 1.35f, 1.75f, 2.25f, 3f)
 
-/** In-app PDF reader with pen and highlighter, typed notes, zoom and page memory. Works offline. */
+/** How the whiteboard shares the screen with the paper. */
+enum class BoardMode { CLOSED, SPLIT, FULL }
+
+/**
+ * In-app PDF reader: pen and highlighter on the pages, a whiteboard beside the paper for working
+ * things out, typed notes, zoom and page memory. Works offline.
+ */
 @OptIn(FlowPreview::class)
 @Composable
-fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false) {
+fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false, boardAtStart: BoardMode = BoardMode.CLOSED) {
     val app = LocalApp.current
     val graph = app.graph
     val paper = remember(id) { graph.paper(id) }
@@ -138,12 +134,14 @@ fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false) {
 
     val session = remember(id) { InkSession(graph.notes.load(id)) }
     val settings = graph.ink
-    var zoom by remember { mutableStateOf(0) }
-    var notesOpen by remember { mutableStateOf(notesOpenAtStart) }
+    var zoom by rememberSaveable { mutableStateOf(0) }
+    var notesOpen by rememberSaveable { mutableStateOf(notesOpenAtStart) }
+    var board by rememberSaveable { mutableStateOf(boardAtStart) }
+    var split by rememberSaveable { mutableFloatStateOf(0.5f) }
     var inking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = graph.store.entry(id)?.lastPage ?: 0)
+    val boardState = rememberLazyListState()
     val hScroll = rememberScrollState()
-    val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
 
     fun persist() = graph.notes.save(id, session.snapshot(Clock.System.now().toEpochMilliseconds()))
@@ -153,7 +151,10 @@ fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false) {
         snapshotFlow { session.version }.drop(1).debounce(500).collect { persist() }
     }
     DisposableEffect(session) { onDispose { if (session.version > 0) persist() } }
-
+    // Remember pen choices between launches.
+    LaunchedEffect(settings) {
+        snapshotFlow { settings.toPrefs() }.drop(1).debounce(800).collect { graph.store.setInk(it) }
+    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex }.distinctUntilChanged().debounce(600).collect { page ->
             graph.store.setLastPage(id, page)
@@ -185,19 +186,36 @@ fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false) {
             },
     ) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(app, paper?.title ?: "Paper", doc?.getOrNull()?.pageCount, listState, zoom, onZoom = { zoom = it }, notesOpen = notesOpen, onNotes = { notesOpen = !notesOpen })
+            TopBar(
+                app, paper?.title ?: "Paper", doc?.getOrNull()?.pageCount, listState, zoom, onZoom = { zoom = it },
+                board = board, onBoard = { board = if (board == BoardMode.CLOSED) BoardMode.SPLIT else BoardMode.CLOSED },
+                notesOpen = notesOpen, onNotes = { notesOpen = !notesOpen },
+            )
             Row(Modifier.weight(1f).fillMaxWidth()) {
                 Box(Modifier.weight(1f).fillMaxHeight()) {
-                    val result = doc
-                    when {
-                        result == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary) }
-                        result.getOrNull() == null -> EmptyState(Icons.Outlined.ErrorOutline, "Can't open this PDF", "The file may be damaged. Remove it from this device and open the paper again.")
-                        else -> Pages(
-                            doc = result.getOrNull()!!, zoom = zoomSteps[zoom], listState = listState, hScroll = hScroll,
-                            session = session, settings = settings, scrollEnabled = !inking,
+                    val paperView: @Composable (Modifier) -> Unit = { m ->
+                        Box(m) {
+                            val result = doc
+                            when {
+                                result == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary) }
+                                result.getOrNull() == null -> EmptyState(Icons.Outlined.ErrorOutline, "Can't open this PDF", "The file may be damaged. Remove it from this device and open the paper again.")
+                                else -> Pages(
+                                    doc = result.getOrNull()!!, zoom = zoomSteps[zoom], listState = listState, hScroll = hScroll,
+                                    session = session, settings = settings, scrollEnabled = !inking,
+                                    onInking = { inking = it }, onInk = onInk,
+                                )
+                            }
+                        }
+                    }
+                    val boardView: @Composable (Modifier) -> Unit = { m ->
+                        Whiteboard(
+                            session, settings, boardState, mode = board, scrollEnabled = !inking,
                             onInking = { inking = it }, onInk = onInk,
+                            onMode = { board = it },
+                            modifier = m,
                         )
                     }
+                    SplitLayout(board, split, onSplit = { split = it }, first = paperView, second = boardView)
                     InkToolbar(
                         settings, session,
                         modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 16.dp),
@@ -224,10 +242,62 @@ fun ReaderScreen(id: String, notesOpenAtStart: Boolean = false) {
     }
 }
 
+/**
+ * Paper and whiteboard side by side when the area is wider than tall, stacked otherwise, with a
+ * draggable divider. FULL shows only the board; CLOSED only the paper.
+ */
+@Composable
+private fun SplitLayout(
+    mode: BoardMode, fraction: Float, onSplit: (Float) -> Unit,
+    first: @Composable (Modifier) -> Unit, second: @Composable (Modifier) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val horizontal = maxWidth > maxHeight
+        val total = with(LocalDensity.current) { (if (horizontal) maxWidth else maxHeight).toPx() }
+        when (mode) {
+            BoardMode.CLOSED -> first(Modifier.fillMaxSize())
+            BoardMode.FULL -> second(Modifier.fillMaxSize())
+            BoardMode.SPLIT -> {
+                val handle: @Composable () -> Unit = {
+                    Box(
+                        Modifier.then(if (horizontal) Modifier.width(14.dp).fillMaxHeight() else Modifier.height(14.dp).fillMaxWidth())
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .pointerInput(horizontal, total) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    onSplit((fraction + (if (horizontal) drag.x else drag.y) / total).coerceIn(0.2f, 0.8f))
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier.clip(CircleShape).background(Folio.colors.muted.copy(alpha = 0.6f))
+                                .then(if (horizontal) Modifier.width(4.dp).height(44.dp) else Modifier.height(4.dp).width(44.dp)),
+                        )
+                    }
+                }
+                if (horizontal) {
+                    Row(Modifier.fillMaxSize()) {
+                        first(Modifier.weight(fraction).fillMaxHeight())
+                        handle()
+                        second(Modifier.weight(1f - fraction).fillMaxHeight())
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        first(Modifier.weight(fraction).fillMaxWidth())
+                        handle()
+                        second(Modifier.weight(1f - fraction).fillMaxWidth())
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun TopBar(
     app: AppScope, title: String, pageCount: Int?, listState: LazyListState,
-    zoom: Int, onZoom: (Int) -> Unit, notesOpen: Boolean, onNotes: () -> Unit,
+    zoom: Int, onZoom: (Int) -> Unit, board: BoardMode, onBoard: () -> Unit, notesOpen: Boolean, onNotes: () -> Unit,
 ) {
     Surface(color = Folio.colors.card, shadowElevation = 2.dp) {
         Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -236,9 +306,20 @@ private fun TopBar(
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (pageCount != null) Text("Page ${listState.firstVisibleItemIndex + 1} of $pageCount", style = MaterialTheme.typography.bodySmall, color = Folio.colors.muted)
             }
-            IconButton(onClick = { if (zoom > 0) onZoom(zoom - 1) }, enabled = zoom > 0) { Icon(Icons.Outlined.ZoomOut, "Zoom out") }
-            if (app.wide) Text("${(zoomSteps[zoom] * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(44.dp))
-            IconButton(onClick = { if (zoom < zoomSteps.lastIndex) onZoom(zoom + 1) }, enabled = zoom < zoomSteps.lastIndex) { Icon(Icons.Outlined.ZoomIn, "Zoom in") }
+            if (board != BoardMode.FULL) {
+                IconButton(onClick = { if (zoom > 0) onZoom(zoom - 1) }, enabled = zoom > 0) { Icon(Icons.Outlined.ZoomOut, "Zoom out") }
+                if (app.wide) Text("${(zoomSteps[zoom] * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(44.dp))
+                IconButton(onClick = { if (zoom < zoomSteps.lastIndex) onZoom(zoom + 1) }, enabled = zoom < zoomSteps.lastIndex) { Icon(Icons.Outlined.ZoomIn, "Zoom in") }
+            }
+            val boardOn = board != BoardMode.CLOSED
+            IconButton(onClick = onBoard) {
+                Box(
+                    Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(if (boardOn) Folio.colors.highlight else Color.Transparent),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Outlined.Draw, if (boardOn) "Close whiteboard" else "Open whiteboard", tint = if (boardOn) Folio.colors.onHighlight else MaterialTheme.colorScheme.onBackground)
+                }
+            }
             IconButton(onClick = onNotes) {
                 Icon(Icons.AutoMirrored.Outlined.StickyNote2, "Notes", tint = if (notesOpen) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground)
             }
@@ -260,7 +341,7 @@ private fun Pages(
         val base = minOf(available - 16.dp, 860.dp)
         val pageWidth = base * zoom
         val density = LocalDensity.current
-        val widthPx = with(density) { pageWidth.roundToPx() }.coerceAtMost(2600)
+        val widthPx = with(density) { pageWidth.roundToPx() }.coerceIn(1, 2600)
         val cache = remember(doc) { LinkedHashMap<String, ImageBitmap>() }
         Box(Modifier.fillMaxSize().horizontalScroll(hScroll, enabled = scrollEnabled), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
@@ -285,7 +366,7 @@ private fun Pages(
                         Modifier.width(pageWidth).aspectRatio(1f / doc.aspectRatio(index))
                             .shadow(4.dp, RoundedCornerShape(4.dp)).clip(RoundedCornerShape(4.dp)).background(Color.White)
                             .inkInput(
-                                page = index, session = session, settings = settings, pen = pen,
+                                page = index, board = false, session = session, settings = settings, pen = pen,
                                 onPan = { d -> listState.dispatchRawDelta(-d.y); hScroll.dispatchRawDelta(-d.x) },
                                 onInkingChange = onInking, onInk = onInk,
                             ),
@@ -294,14 +375,7 @@ private fun Pages(
                         val b = bitmap
                         if (b == null) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color(0xFFB0ACA3))
                         else Image(b, "Page ${index + 1}", Modifier.fillMaxSize(), contentScale = ContentScale.FillWidth)
-                        // Finished strokes, then the stroke in progress, on their own layers so
-                        // drawing doesn't repaint the whole page. Offscreen so highlighter multiplies.
-                        Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.ModulateAlpha }) {
-                            drawStrokes(session.strokes.filter { it.page == index })
-                        }
-                        Canvas(Modifier.fillMaxSize()) {
-                            if (session.livePage == index) drawStroke(session.liveTool, session.liveColor, session.liveWidth, session.livePoints.toList())
-                        }
+                        InkLayers(session, index, board = false)
                     }
                 }
             }
@@ -309,102 +383,21 @@ private fun Pages(
     }
 }
 
-/** Floating pill: pen, highlighter, eraser, colour, undo/redo, and whether touch writes. */
+/**
+ * Finished strokes, then the stroke in progress, on their own layers so drawing doesn't repaint
+ * the page underneath. Offscreen so the highlighter multiplies onto it.
+ */
 @Composable
-private fun InkToolbar(settings: InkSettings, session: InkSession, modifier: Modifier = Modifier) {
-    var palette by remember { mutableStateOf(false) }
-    var hint by remember { mutableStateOf(false) }
-    LaunchedEffect(hint) { if (hint) { kotlinx.coroutines.delay(4500); hint = false } }
-
-    fun pick(tool: Tool) {
-        if (settings.tool == tool && tool != Tool.ERASER) palette = !palette else palette = false
-        settings.tool = tool
-        if (!settings.stylusSeen && !settings.touchDraws) hint = true
+fun InkLayers(session: InkSession, page: Int, board: Boolean) {
+    Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.ModulateAlpha }) {
+        drawStrokes(session.strokesOn(page, board))
     }
-
-    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-        Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-            AnimatedVisibility(hint, enter = fadeIn(), exit = fadeOut()) {
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.onBackground, contentColor = MaterialTheme.colorScheme.background, modifier = Modifier.padding(bottom = 10.dp)) {
-                    Text("Write with your stylus. To use a finger or mouse, turn on the hand.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
-                }
-            }
-            AnimatedVisibility(palette, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
-                Palette(settings, Modifier.padding(bottom = 10.dp))
-            }
-            Surface(shape = RoundedCornerShape(22.dp), color = Folio.colors.card, shadowElevation = 10.dp) {
-                Row(Modifier.padding(horizontal = 6.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ToolButton(Icons.Outlined.Edit, "Pen", settings.tool == Tool.PEN, dot = Color(settings.penColor)) { pick(Tool.PEN) }
-                    ToolButton(Icons.Outlined.BorderColor, "Highlighter", settings.tool == Tool.HIGHLIGHTER, dot = Color(settings.highlighterColor)) { pick(Tool.HIGHLIGHTER) }
-                    ToolButton(EraserIcon, "Eraser", settings.tool == Tool.ERASER) { pick(Tool.ERASER) }
-                    Divider()
-                    ToolButton(Icons.AutoMirrored.Outlined.Undo, "Undo", false, enabled = session.canUndo) { session.undo() }
-                    ToolButton(Icons.AutoMirrored.Outlined.Redo, "Redo", false, enabled = session.canRedo) { session.redo() }
-                    Divider()
-                    ToolButton(Icons.Outlined.PanTool, if (settings.touchDraws) "Finger and mouse write (tap to scroll instead)" else "Finger and mouse scroll (tap to write with them)", settings.touchDraws) {
-                        settings.touchDraws = !settings.touchDraws
-                        hint = false
-                    }
-                }
-            }
+    Canvas(Modifier.fillMaxSize()) {
+        if (session.livePage == page && session.liveBoard == board) {
+            drawStroke(session.liveTool, session.liveColor, session.liveWidth, session.livePoints.toList(), session.livePressure)
         }
     }
 }
-
-@Composable
-private fun Divider() = Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(MaterialTheme.colorScheme.outlineVariant))
-
-@Composable
-private fun ToolButton(icon: ImageVector, label: String, selected: Boolean, enabled: Boolean = true, dot: Color? = null, onClick: () -> Unit) {
-    Box(
-        Modifier.size(44.dp).clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Folio.colors.highlight else Color.Transparent),
-        contentAlignment = Alignment.Center,
-    ) {
-        IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
-            Icon(icon, label, Modifier.size(20.dp), tint = when {
-                selected -> Folio.colors.onHighlight
-                enabled -> MaterialTheme.colorScheme.onBackground
-                else -> Folio.colors.muted.copy(alpha = 0.5f)
-            })
-        }
-        if (dot != null) {
-            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp).size(width = 14.dp, height = 3.dp).clip(CircleShape).background(dot))
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Palette(settings: InkSettings, modifier: Modifier = Modifier) {
-    val highlighter = settings.tool == Tool.HIGHLIGHTER
-    Surface(modifier, shape = RoundedCornerShape(18.dp), color = Folio.colors.card, shadowElevation = 8.dp) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            val colors = if (highlighter) HighlighterColors else PenColors
-            val current = if (highlighter) settings.highlighterColor else settings.penColor
-            colors.forEach { c ->
-                Box(
-                    Modifier.padding(4.dp).size(28.dp).clip(CircleShape).background(Color(c))
-                        .then(if (c == current) Modifier.border(3.dp, MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f), CircleShape) else Modifier)
-                        .clickableNoRipple { if (highlighter) settings.highlighterColor = c else settings.penColor = c },
-                )
-            }
-            if (!highlighter) {
-                Divider()
-                listOf(0, 1, 2).forEach { i ->
-                    Box(
-                        Modifier.padding(2.dp).size(32.dp).clip(CircleShape)
-                            .background(if (settings.penWidth == i) Folio.colors.chip else Color.Transparent)
-                            .clickableNoRipple { settings.penWidth = i },
-                        contentAlignment = Alignment.Center,
-                    ) { Box(Modifier.size((4 + i * 4).dp).clip(CircleShape).background(Color(settings.penColor))) }
-                }
-            }
-        }
-    }
-}
-
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier = this.clickable(onClick = onClick)
 
 /** Typed notes plus a list of the pages you've written on. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -417,7 +410,7 @@ private fun NotesPanel(session: InkSession, listState: LazyListState, onClose: (
                 Text("Notes", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close notes") }
             }
-            val pages = session.strokes.map { it.page }.distinct().sorted()
+            val pages = session.strokes.filter { !it.board }.map { it.page }.distinct().sorted()
             if (pages.isNotEmpty()) {
                 Text("WRITTEN ON", style = MaterialTheme.typography.labelSmall, color = Folio.colors.muted)
                 Spacer(Modifier.height(8.dp))

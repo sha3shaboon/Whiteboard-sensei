@@ -18,8 +18,10 @@ import okio.Path
 enum class InkTool { PEN, HIGHLIGHTER }
 
 /**
- * One stroke on one page. Points are flattened (x, y, pressure) triples with x and y divided by
- * the page width, so strokes stay in place at any zoom or screen size. [width] is in the same units.
+ * One stroke on one page of the paper, or on one sheet of its whiteboard when [board] is true.
+ * Points are flattened (x, y, pressure) triples with x and y divided by the page width, so strokes
+ * stay in place at any zoom or screen size. [width] is in the same units. [pressure] is how much
+ * pen pressure changed the width when it was drawn (0 = none, 1 = full).
  */
 @Serializable
 data class InkStroke(
@@ -28,13 +30,21 @@ data class InkStroke(
     val color: Long,
     val width: Float,
     val points: List<Float>,
+    val board: Boolean = false,
+    val pressure: Float = 1f,
 )
+
+@Serializable
+enum class BoardStyle(val label: String) { GRID("Grid"), LINES("Lines"), DOTS("Dots"), BLANK("Blank") }
 
 @Serializable
 data class PaperNotes(
     val strokes: List<InkStroke> = emptyList(),
     val text: String = "",
     val updatedAt: Long = 0,
+    /** Number of whiteboard sheets (the board always has at least one). */
+    val boardSheets: Int = 1,
+    val boardStyle: BoardStyle = BoardStyle.GRID,
 ) {
     val isEmpty: Boolean get() = strokes.isEmpty() && text.isBlank()
 }

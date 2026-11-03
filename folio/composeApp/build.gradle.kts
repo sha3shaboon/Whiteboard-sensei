@@ -65,8 +65,8 @@ android {
         applicationId = "app.folio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/androidMain/res")
@@ -95,7 +95,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "Folio"
-            packageVersion = "1.1.0"
+            packageVersion = "1.2.0"
             description = "A library of new open-access research papers"
             vendor = "Folio"
             copyright = "Folio. Paper data from arXiv, Europe PMC and OpenAlex."

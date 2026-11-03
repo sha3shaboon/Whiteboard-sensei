@@ -38,7 +38,7 @@ import app.folio.ui.screens.HomeScreen
 import app.folio.ui.screens.InterestsScreen
 import app.folio.ui.screens.LibraryScreen
 import app.folio.ui.screens.PaperScreen
-import app.folio.ui.screens.ReaderScreen
+import app.folio.ui.reader.ReaderScreen
 import app.folio.ui.screens.SearchScreen
 import app.folio.ui.screens.SettingsScreen
 import app.folio.ui.screens.Sidebar
@@ -127,7 +127,7 @@ private fun ScreenContent(screen: Screen) {
         is Screen.TopicFeed -> TopicFeedScreen(screen.topic)
         Screen.ForYou -> TopicFeedScreen(null)
         is Screen.PaperDetail -> PaperScreen(screen.id)
-        is Screen.Reader -> ReaderScreen(screen.id, screen.notesOpen)
+        is Screen.Reader -> ReaderScreen(screen.id, screen.notesOpen, screen.board)
     }
 }
 

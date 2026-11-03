@@ -21,10 +21,12 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.unit.dp
+import app.folio.data.BoardStyle
+import app.folio.data.InkPrefs
 import app.folio.data.InkStroke
 import app.folio.data.InkTool
 import app.folio.data.PaperNotes
-import androidx.compose.ui.unit.dp
 import kotlin.math.hypot
 
 enum class Tool { PEN, HIGHLIGHTER, ERASER }
@@ -32,37 +34,55 @@ enum class Tool { PEN, HIGHLIGHTER, ERASER }
 val PenColors = listOf(0xFF1B1B1FL, 0xFF2457D6L, 0xFFD93A2BL, 0xFF1E8E5AL, 0xFF7B4BC4L, 0xFFF26B3AL)
 val HighlighterColors = listOf(0xFFFFE14DL, 0xFF8FE388L, 0xFFFF9BC8L, 0xFF8CD3FFL, 0xFFFFBE6BL)
 
-/** Pen widths as a fraction of page width (thin, medium, thick). */
-val PenWidths = listOf(0.0025f, 0.0042f, 0.0075f)
-const val HIGHLIGHTER_WIDTH = 0.02f
+/** Pen size presets and the slider's range, as fractions of page width. */
+val PenPresets = listOf(0.0022f, 0.0042f, 0.0075f, 0.012f)
+val PenSizeRange = 0.0012f..0.02f
+val HighlighterPresets = listOf(0.012f, 0.02f, 0.032f)
+val HighlighterSizeRange = 0.008f..0.05f
+val EraserSizeRange = 6f..48f
 
-/** Tool choices; kept for the whole session so each paper opens with your last pen. */
+/** Tool choices, shared by every paper and the whiteboard, and saved between launches. */
 @Stable
-class InkSettings {
+class InkSettings(prefs: InkPrefs = InkPrefs()) {
     var tool by mutableStateOf(Tool.PEN)
-    var penColor by mutableStateOf(PenColors[0])
-    var highlighterColor by mutableStateOf(HighlighterColors[0])
-    var penWidth by mutableIntStateOf(1)
+    var penColor by mutableStateOf(prefs.penColor)
+    var highlighterColor by mutableStateOf(prefs.highlighterColor)
+    var penSize by mutableStateOf(prefs.penSize.coerceIn(PenSizeRange))
+    var highlighterSize by mutableStateOf(prefs.highlighterSize.coerceIn(HighlighterSizeRange))
+
+    /** 0 = constant width, 1 = width follows pen pressure fully. */
+    var pressure by mutableStateOf(prefs.pressure.coerceIn(0f, 1f))
 
     /** Off: only the stylus writes, fingers and mouse scroll. On: fingers and mouse write too. */
-    var touchDraws by mutableStateOf(false)
+    var touchDraws by mutableStateOf(prefs.touchDraws)
+
+    /** Eraser reach in dp. */
+    var eraserSize by mutableStateOf(prefs.eraserSize.coerceIn(EraserSizeRange))
 
     /** Set once a real stylus has been seen, to stop suggesting "draw with touch". */
     var stylusSeen by mutableStateOf(false)
+
+    fun toPrefs() = InkPrefs(penColor, highlighterColor, penSize, highlighterSize, pressure, touchDraws, eraserSize)
 }
 
-/** Strokes and typed notes for one open paper, with undo/redo. */
+/** Strokes, whiteboard and typed notes for one open paper, with one shared undo history. */
 @Stable
 class InkSession(initial: PaperNotes) {
     val strokes = mutableStateListOf<InkStroke>().apply { addAll(initial.strokes) }
     var text by mutableStateOf(initial.text)
+    var boardSheets by mutableIntStateOf(maxOf(1, initial.boardSheets, (initial.strokes.filter { it.board }.maxOfOrNull { it.page } ?: -1) + 1))
+        private set
+    var boardStyle by mutableStateOf(initial.boardStyle)
+        private set
 
     /** The stroke being drawn right now. */
     var livePage by mutableIntStateOf(-1)
+    var liveBoard by mutableStateOf(false)
     val livePoints = mutableStateListOf<Float>()
     var liveTool by mutableStateOf(InkTool.PEN)
     var liveColor by mutableStateOf(0L)
     var liveWidth by mutableStateOf(0f)
+    var livePressure by mutableStateOf(1f)
 
     /** Bumped on every change so the screen knows to save. */
     var version by mutableIntStateOf(0)
@@ -88,15 +108,17 @@ class InkSession(initial: PaperNotes) {
         text = value; version++
     }
 
+    fun strokesOn(page: Int, board: Boolean): List<InkStroke> = strokes.filter { it.page == page && it.board == board }
+
     fun add(stroke: InkStroke) {
         strokes += stroke
         undoStack.addLast(Edit.Added(stroke)); redoStack.clear(); changed()
     }
 
-    /** Removes whole strokes near (x, y) on [page]; coordinates are page-width units. */
-    fun eraseAt(page: Int, x: Float, y: Float, radius: Float): Boolean {
+    /** Removes whole strokes near (x, y); coordinates are page-width units. */
+    fun eraseAt(page: Int, board: Boolean, x: Float, y: Float, radius: Float): Boolean {
         val hit = strokes.filter { s ->
-            s.page == page && run {
+            s.page == page && s.board == board && run {
                 val reach = radius + s.width / 2
                 val p = s.points
                 if (p.size < 6) return@run p.size >= 2 && hypot(p[0] - x, p[1] - y) <= reach
@@ -114,6 +136,22 @@ class InkSession(initial: PaperNotes) {
         strokes.removeAll(hit)
         undoStack.addLast(Edit.Erased(hit)); redoStack.clear(); changed()
         return true
+    }
+
+    /** Wipes one whiteboard sheet; undo brings it back. */
+    fun clearSheet(sheet: Int) {
+        val hit = strokesOn(sheet, board = true)
+        if (hit.isEmpty()) return
+        strokes.removeAll(hit)
+        undoStack.addLast(Edit.Erased(hit)); redoStack.clear(); changed()
+    }
+
+    fun addSheet() {
+        boardSheets++; version++
+    }
+
+    fun setStyle(style: BoardStyle) {
+        boardStyle = style; version++
     }
 
     fun undo() {
@@ -134,7 +172,7 @@ class InkSession(initial: PaperNotes) {
         undoStack.addLast(edit); changed()
     }
 
-    fun snapshot(now: Long) = PaperNotes(strokes.toList(), text, now)
+    fun snapshot(now: Long) = PaperNotes(strokes.toList(), text, now, boardSheets, boardStyle)
 }
 
 private fun segmentDistance(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
@@ -153,19 +191,21 @@ private sealed interface Action {
 }
 
 /**
- * Pointer handling for one PDF page: stylus writes, the stylus eraser end (or the eraser tool)
- * erases, and fingers/mouse either scroll or write depending on [InkSettings.touchDraws].
+ * Pointer handling for one PDF page or whiteboard sheet: stylus writes, the stylus eraser end
+ * (or the eraser tool) erases, and fingers/mouse either scroll or write depending on
+ * [InkSettings.touchDraws].
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 fun Modifier.inkInput(
     page: Int,
+    board: Boolean,
     session: InkSession,
     settings: InkSettings,
     pen: PenInput,
     onPan: (Offset) -> Unit,
     onInkingChange: (Boolean) -> Unit,
     onInk: () -> Unit,
-): Modifier = pointerInput(page, session, settings, pen) {
+): Modifier = pointerInput(page, board, session, settings, pen) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val sample = pen.classify(down)
@@ -191,17 +231,20 @@ fun Modifier.inkInput(
             Action.Pan -> trackPointer(id) { change -> onPan(change.positionChange()) }
             Action.Erase -> {
                 onInkingChange(true)
-                val radius = 14.dp.toPx() / w
-                session.eraseAt(page, down.position.x / w, down.position.y / w, radius)
-                trackPointer(id) { change -> session.eraseAt(page, change.position.x / w, change.position.y / w, radius) }
+                val radius = settings.eraserSize.dp.toPx() / w
+                session.eraseAt(page, board, down.position.x / w, down.position.y / w, radius)
+                trackPointer(id) { change -> session.eraseAt(page, board, change.position.x / w, change.position.y / w, radius) }
                 onInkingChange(false)
             }
             is Action.Draw -> {
                 onInkingChange(true)
+                val isPen = action.tool == InkTool.PEN
                 session.livePage = page
+                session.liveBoard = board
                 session.liveTool = action.tool
-                session.liveColor = if (action.tool == InkTool.PEN) settings.penColor else settings.highlighterColor
-                session.liveWidth = if (action.tool == InkTool.PEN) PenWidths[settings.penWidth] else HIGHLIGHTER_WIDTH
+                session.liveColor = if (isPen) settings.penColor else settings.highlighterColor
+                session.liveWidth = if (isPen) settings.penSize else settings.highlighterSize
+                session.livePressure = if (isPen) settings.pressure else 0f
                 session.livePoints.clear()
                 session.livePoints.addAll(listOf(down.position.x / w, down.position.y / w, sample.pressure))
                 trackPointer(id) { change ->
@@ -212,7 +255,7 @@ fun Modifier.inkInput(
                 }
                 val pts = session.livePoints.toMutableList()
                 if (pts.size == 3) pts.addAll(listOf(pts[0] + 0.0005f, pts[1] + 0.0005f, pts[2])) // a tap leaves a dot
-                session.add(InkStroke(page, session.liveTool, session.liveColor, session.liveWidth, pts))
+                session.add(InkStroke(page, session.liveTool, session.liveColor, session.liveWidth, pts, board = board, pressure = session.livePressure))
                 session.livePoints.clear()
                 session.livePage = -1
                 onInkingChange(false)
@@ -235,12 +278,16 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.tra
     }
 }
 
-/** Draws finished strokes for one page. Highlighter multiplies onto the page like real ink. */
+/** Draws finished strokes. Highlighter multiplies onto the page like real ink. */
 fun DrawScope.drawStrokes(strokes: List<InkStroke>) {
-    strokes.forEach { drawStroke(it.tool, it.color, it.width, it.points) }
+    strokes.forEach { drawStroke(it.tool, it.color, it.width, it.points, it.pressure) }
 }
 
-fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<Float>) {
+/**
+ * Draws one stroke. With [sensitivity] > 0 and real pressure samples, the width follows the pen:
+ * at full sensitivity a light touch is about a third of the set width and a firm one about 1.25×.
+ */
+fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<Float>, sensitivity: Float = 1f) {
     val w = size.width
     if (points.size < 6) return
     if (tool == InkTool.HIGHLIGHTER) {
@@ -254,9 +301,9 @@ fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<
     }
     val base = width * w
     val c = Color(color)
-    val uniform = (2 until points.size step 3).all { points[it] >= 0.99f }
+    val uniform = sensitivity <= 0.01f || (2 until points.size step 3).all { points[it] >= 0.99f }
     if (uniform) {
-        // Mouse or pressure-less pen: one smooth path through midpoints.
+        // Constant width (mouse, pressure off): one smooth path through midpoints.
         val path = Path().apply {
             moveTo(points[0] * w, points[1] * w)
             var i = 3
@@ -270,13 +317,13 @@ fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<
         }
         drawPath(path, c, style = Stroke(base, cap = StrokeCap.Round, join = StrokeJoin.Round))
     } else {
-        // Pressure-sensitive: width follows the pen, segment by segment.
         var i = 0
         while (i + 5 < points.size) {
             val p = (points[i + 2] + points[i + 5]) / 2
+            val factor = (1f - sensitivity) + sensitivity * (0.35f + 0.9f * p)
             drawLine(
                 c, Offset(points[i] * w, points[i + 1] * w), Offset(points[i + 3] * w, points[i + 4] * w),
-                strokeWidth = base * (0.35f + 0.9f * p), cap = StrokeCap.Round,
+                strokeWidth = base * factor, cap = StrokeCap.Round,
             )
             i += 3
         }

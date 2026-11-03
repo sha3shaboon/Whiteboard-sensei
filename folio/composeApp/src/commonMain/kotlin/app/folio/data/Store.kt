@@ -19,12 +19,26 @@ import okio.Path
 @Serializable
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+/** Pen and highlighter choices, remembered between launches. Sizes are fractions of page width. */
+@Serializable
+data class InkPrefs(
+    val penColor: Long = 0xFF1B1B1FL,
+    val highlighterColor: Long = 0xFFFFE14DL,
+    val penSize: Float = 0.0042f,
+    val highlighterSize: Float = 0.02f,
+    val pressure: Float = 0.8f,
+    val touchDraws: Boolean = false,
+    /** Eraser reach in dp. */
+    val eraserSize: Float = 14f,
+)
+
 @Serializable
 data class Settings(
     val onboarded: Boolean = false,
     val interests: List<Topic> = emptyList(),
     val openAlexKey: String = "",
     val theme: ThemeMode = ThemeMode.SYSTEM,
+    val ink: InkPrefs = InkPrefs(),
 )
 
 /**
@@ -97,6 +111,10 @@ class Store(
     fun setOpenAlexKey(key: String) = editSettings { it.copy(openAlexKey = key.trim()) }
 
     fun setTheme(mode: ThemeMode) = editSettings { it.copy(theme = mode) }
+
+    fun setInk(prefs: InkPrefs) {
+        if (_settings.value.ink != prefs) editSettings { it.copy(ink = prefs) }
+    }
 
     // Library
 

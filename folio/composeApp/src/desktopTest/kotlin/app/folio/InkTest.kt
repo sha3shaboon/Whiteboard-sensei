@@ -25,13 +25,50 @@ class InkTest {
         val s = InkSession(PaperNotes())
         s.add(stroke(0, 0.1f)); s.add(stroke(0, 0.5f)); s.add(stroke(1, 0.1f))
         assertEquals(3, s.strokes.size)
-        assertTrue(s.eraseAt(0, 0.52f, 0.1f, 0.01f), "eraser should hit the second stroke")
+        assertTrue(s.eraseAt(0, false, 0.52f, 0.1f, 0.01f), "eraser should hit the second stroke")
         assertEquals(2, s.strokes.size)
-        assertFalse(s.eraseAt(0, 0.9f, 0.9f, 0.01f))
+        assertFalse(s.eraseAt(0, false, 0.9f, 0.9f, 0.01f))
         s.undo(); assertEquals(3, s.strokes.size)
         s.undo(); assertEquals(2, s.strokes.size)
         s.redo(); assertEquals(3, s.strokes.size)
         assertTrue(s.canUndo && s.canRedo)
+    }
+
+    @Test
+    fun whiteboardIsSeparateFromThePaper() {
+        val s = InkSession(PaperNotes())
+        s.add(stroke(0, 0.1f))
+        s.add(stroke(0, 0.1f).copy(board = true))
+        assertEquals(1, s.strokesOn(0, board = false).size)
+        assertEquals(1, s.strokesOn(0, board = true).size)
+        // Erasing on the board leaves the paper's stroke alone, even at the same spot.
+        assertTrue(s.eraseAt(0, true, 0.12f, 0.1f, 0.01f))
+        assertEquals(1, s.strokesOn(0, board = false).size)
+        assertEquals(0, s.strokesOn(0, board = true).size)
+        s.addSheet(); s.add(stroke(1, 0.2f).copy(board = true)); s.add(stroke(1, 0.6f).copy(board = true))
+        s.clearSheet(1)
+        assertEquals(0, s.strokesOn(1, board = true).size)
+        s.undo()
+        assertEquals(2, s.strokesOn(1, board = true).size, "undo brings a cleared sheet back")
+        s.setStyle(app.folio.data.BoardStyle.LINES)
+        val snap = s.snapshot(1)
+        assertEquals(2, snap.boardSheets)
+        assertEquals(app.folio.data.BoardStyle.LINES, snap.boardStyle)
+        // Reopening restores sheets and style.
+        val again = InkSession(snap)
+        assertEquals(2, again.boardSheets)
+        assertEquals(app.folio.data.BoardStyle.LINES, again.boardStyle)
+    }
+
+    @Test
+    fun oldNotesStillLoad() {
+        // Notes saved before the whiteboard existed have no board/pressure fields.
+        val json = Json { ignoreUnknownKeys = true }
+        val old = """{"strokes":[{"page":3,"tool":"PEN","color":4278190080,"width":0.004,"points":[0.1,0.1,1.0,0.2,0.2,1.0]}],"text":"hi","updatedAt":5}"""
+        val notes = json.decodeFromString(PaperNotes.serializer(), old)
+        assertEquals(false, notes.strokes.single().board)
+        assertEquals(1f, notes.strokes.single().pressure)
+        assertEquals(1, notes.boardSheets)
     }
 
     @Test
