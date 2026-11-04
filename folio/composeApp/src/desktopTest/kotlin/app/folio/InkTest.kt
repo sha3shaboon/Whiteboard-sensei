@@ -110,5 +110,9 @@ class CleanTextTest {
 
 class PointerTypeInfoLayoutTest {
     @Test
-    fun size() = assertEquals(152, PointerTypeInfo().size(), "sizeof(POINTER_TYPE_INFO)")
+    fun size() {
+        assertEquals(152, PointerTypeInfo().size(), "sizeof(POINTER_TYPE_INFO), pen")
+        assertEquals(144, PointerTouchInfo().size(), "sizeof(POINTER_TOUCH_INFO)")
+        assertEquals(152, TouchTypeInfo().size(), "sizeof(POINTER_TYPE_INFO), touch")
+    }
 }

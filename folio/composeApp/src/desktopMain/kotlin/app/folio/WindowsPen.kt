@@ -4,6 +4,10 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerType
 import app.folio.ink.InputKind
 import app.folio.ink.PenInput
+import app.folio.ink.Pinch
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import app.folio.ink.PointerSample
 import com.sun.jna.Native
 import com.sun.jna.Pointer
@@ -50,6 +54,19 @@ object WindowsPen : PenInput {
 
     override val manualTouchScroll: Boolean = true
 
+    // Touch contacts Windows reports, keyed by pointer id, in client pixels of the window that got them.
+    private val touches = java.util.concurrent.ConcurrentHashMap<Int, Offset>()
+    private var pinchPair: Pair<Int, Int>? = null
+    private var pinchLast: Pair<Offset, Offset>? = null
+    private val _pinches = MutableSharedFlow<Pinch>(extraBufferCapacity = 64)
+    override val pinches: Flow<Pinch> = _pinches
+    override val multiTouchActive: Boolean get() = touches.size >= 2
+
+    /** Product of pinch steps since the current pinch began, for diagnostics and tests. */
+    @Volatile
+    var pinchScaleTotal: Float = 1f
+        private set
+
     override fun classify(change: PointerInputChange): PointerSample {
         val s = state
         val fresh = s != null && s.inRange && System.currentTimeMillis() - s.time < 250
@@ -94,7 +111,7 @@ object WindowsPen : PenInput {
         if (Pointer.nativeValue(previous) == 0L) return
         val proc = object : WinUser.WindowProc {
             override fun callback(h: HWND, msg: Int, w: WPARAM, l: LPARAM): LRESULT {
-                if (msg in WM_POINTERUPDATE..WM_POINTERCAPTURECHANGED) runCatching { onPointer(msg, w) }
+                if (msg in WM_POINTERUPDATE..WM_POINTERCAPTURECHANGED) runCatching { onPointer(h, msg, w) }
                 return user32.CallWindowProc(previous, h, msg, w, l)
             }
         }
@@ -106,7 +123,7 @@ object WindowsPen : PenInput {
         }
     }
 
-    private fun onPointer(msg: Int, w: WPARAM) {
+    private fun onPointer(hwnd: HWND, msg: Int, w: WPARAM) {
         val id = (w.toLong() and 0xFFFF).toInt()
         val type = IntByReference()
         if (!Win32.INSTANCE.GetPointerType(id, type)) return
@@ -125,14 +142,57 @@ object WindowsPen : PenInput {
                 // Keep the state "in range" through pen-up so the trailing mouse-up still reads as pen.
                 state = State(kind, pressure, inRange = !ending, time = now)
             }
-            PT_TOUCH -> state = State(InputKind.FINGER, 1f, inRange = !ending, time = now)
+            PT_TOUCH -> {
+                state = State(InputKind.FINGER, 1f, inRange = !ending, time = now)
+                trackTouch(hwnd, id, msg)
+            }
             else -> if (ending) state = null
+        }
+    }
+
+    /**
+     * Follows touch contacts and turns two of them moving apart or together into [Pinch] steps.
+     * Java only sees the first finger (as a mouse), so this is the only way to get a pinch on Windows.
+     */
+    private fun trackTouch(hwnd: HWND, id: Int, msg: Int) {
+        val info = PointerInfo()
+        val up = msg == WM_POINTERUP || msg == WM_POINTERLEAVE || msg == WM_POINTERCAPTURECHANGED
+        if (!up && Win32.INSTANCE.GetPointerInfo(id, info) && info.pointerFlags and POINTER_FLAG_INCONTACT != 0) {
+            val pt = POINT(info.ptPixelLocation.x, info.ptPixelLocation.y)
+            Win32.INSTANCE.ScreenToClient(hwnd, pt)
+            touches[id] = Offset(pt.x.toFloat(), pt.y.toFloat())
+        } else {
+            touches.remove(id)
+        }
+        val ids = touches.keys.sorted()
+        if (ids.size < 2) {
+            pinchPair = null; pinchLast = null
+            return
+        }
+        val pair = ids[0] to ids[1]
+        val a = touches[pair.first] ?: return
+        val b = touches[pair.second] ?: return
+        if (pair != pinchPair) {
+            pinchPair = pair; pinchLast = a to b; pinchScaleTotal = 1f
+            return
+        }
+        val (pa, pb) = pinchLast ?: (a to b)
+        val before = kotlin.math.hypot(pb.x - pa.x, pb.y - pa.y).coerceAtLeast(1f)
+        val now = kotlin.math.hypot(b.x - a.x, b.y - a.y).coerceAtLeast(1f)
+        val c = Offset((a.x + b.x) / 2, (a.y + b.y) / 2)
+        val pc = Offset((pa.x + pb.x) / 2, (pa.y + pb.y) / 2)
+        pinchLast = a to b
+        if (now != before || c != pc) {
+            pinchScaleTotal *= now / before
+            _pinches.tryEmit(Pinch(now / before, c, c - pc))
         }
     }
 
     // Win32 constants
     private const val WM_POINTERUPDATE = 0x0245
+    private const val WM_POINTERUP = 0x0247
     private const val WM_POINTERLEAVE = 0x024A
+    private const val POINTER_FLAG_INCONTACT = 0x4
     private const val WM_POINTERCAPTURECHANGED = 0x024C
     private const val PT_TOUCH = 2
     private const val PT_PEN = 3
@@ -146,6 +206,8 @@ object WindowsPen : PenInput {
     private interface Win32 : StdCallLibrary {
         fun GetPointerType(pointerId: Int, pointerType: IntByReference): Boolean
         fun GetPointerPenInfo(pointerId: Int, penInfo: PointerPenInfo): Boolean
+        fun GetPointerInfo(pointerId: Int, info: PointerInfo): Boolean
+        fun ScreenToClient(hwnd: HWND, point: POINT): Boolean
         fun SetPropW(hwnd: HWND, name: String, data: HANDLE): Boolean
 
         companion object {

@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import app.folio.data.ThemeMode
@@ -36,6 +38,9 @@ class ScreenshotTour {
     private val out = System.getProperty("shotsDir")?.let(::File)
 
     companion object {
+        /** Height of the reader's top bar plus the whiteboard bar, in dp, at the tour's phone size. */
+        const val TOUR_BOARD_TOP_DP = 112f
+
         /** The paper downloaded in c_, reused by the ink tests. */
         var readPaperId: String? = null
         private val dataDir = Files.createTempDirectory("folio-tour").toString().toPath()
@@ -199,6 +204,54 @@ class ScreenshotTour {
         shot("phone-board-split", 400, 860, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.SPLIT), settle = 5000)
         shot("phone-board-full", 400, 860, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.FULL), settle = 2000)
         shot("desktop-board-split", 1360, 860, scale = 1.5f, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.SPLIT), settle = 5000)
+
+        // Ruler: draw a wobbly line starting just above its top edge; it must save as a straight line.
+        graph.ink.touchDraws = true
+        graph.ink.penColor = app.folio.ink.PenColors[1]
+        val beforeRuler = graph.notes.load(id).strokes.size
+        runDesktopComposeUiTest(800, 1720) {
+            setContent { CompositionLocalProvider(LocalDensity provides Density(2f)) { App(graph, Screen.Reader(id, board = app.folio.ui.reader.BoardMode.FULL)) } }
+            repeat(8) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            onNodeWithContentDescription("Show ruler").performClick()
+            repeat(4) { Thread.sleep(150); mainClock.advanceTimeBy(150); waitForIdle() }
+            // Board viewport starts under the two bars; the ruler sits at 40% of it, 76dp thick.
+            onRoot().performMouseInput {
+                val y0 = 2f * (TOUR_BOARD_TOP_DP + 0.4f * (860f - TOUR_BOARD_TOP_DP) - 38f - 8f)
+                moveTo(androidx.compose.ui.geometry.Offset(160f, y0)); press()
+                for (i in 1..40) moveTo(androidx.compose.ui.geometry.Offset(160f + i * 12f, y0 + 14f * kotlin.math.sin(i / 3f)))
+                release()
+            }
+            repeat(8) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+        }
+        Thread.sleep(1200)
+        val afterRuler = graph.notes.load(id).strokes
+        kotlin.test.assertEquals(beforeRuler + 1, afterRuler.size, "the ruler stroke is saved")
+        val ys = afterRuler.last().points.filterIndexed { i, _ -> i % 3 == 1 }
+        println("ruler stroke: ${ys.size} points, y spread ${ys.max() - ys.min()} (page widths)")
+        kotlin.test.assertTrue(ys.max() - ys.min() < 0.001f, "a wobbly stroke along the ruler must come out straight")
+        graph.ink.touchDraws = false
+
+        // Pinch with two fingers to zoom, then tap the ruler's angle badge to turn it to 45°.
+        runDesktopComposeUiTest(800, 1720) {
+            setContent { CompositionLocalProvider(LocalDensity provides Density(2f)) { App(graph, Screen.Reader(id, board = app.folio.ui.reader.BoardMode.FULL)) } }
+            repeat(8) { Thread.sleep(250); mainClock.advanceTimeBy(250); waitForIdle() }
+            onNodeWithContentDescription("Show ruler").performClick()
+            repeat(2) { Thread.sleep(150); mainClock.advanceTimeBy(150); waitForIdle() }
+            val cy = 2f * (TOUR_BOARD_TOP_DP + 0.62f * (860f - TOUR_BOARD_TOP_DP))
+            onRoot().performTouchInput {
+                down(0, androidx.compose.ui.geometry.Offset(330f, cy)); down(1, androidx.compose.ui.geometry.Offset(470f, cy))
+                for (i in 1..12) {
+                    moveTo(0, androidx.compose.ui.geometry.Offset(330f - i * 10f, cy - i * 4f)); moveTo(1, androidx.compose.ui.geometry.Offset(470f + i * 10f, cy + i * 4f))
+                }
+                up(0); up(1)
+            }
+            repeat(4) { Thread.sleep(150); mainClock.advanceTimeBy(150); waitForIdle() }
+            onRoot().performMouseInput { click(androidx.compose.ui.geometry.Offset(400f, 2f * (TOUR_BOARD_TOP_DP + 0.4f * (860f - TOUR_BOARD_TOP_DP)))) }
+            repeat(6) { Thread.sleep(200); mainClock.advanceTimeBy(200); waitForIdle() }
+            ImageIO.write(onRoot().captureToImage().toAwtImage(), "png", File(out, "phone-board-ruler-zoom.png"))
+            println("saved phone-board-ruler-zoom.png")
+        }
+        shot("desktop-board-full", 1360, 860, scale = 1.5f, start = Screen.Reader(id, board = app.folio.ui.reader.BoardMode.FULL), settle = 1500)
 
         // The pen settings panel, opened through its real button.
         graph.ink.penSize = 0.0075f

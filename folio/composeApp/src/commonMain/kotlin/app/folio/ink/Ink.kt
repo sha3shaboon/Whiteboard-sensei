@@ -75,6 +75,10 @@ class InkSession(initial: PaperNotes) {
     var boardStyle by mutableStateOf(initial.boardStyle)
         private set
 
+    /** Whiteboard zoom (1 = sheet fits the width) and ruler; per open paper, not saved. */
+    var boardZoom by mutableStateOf(1f)
+    val ruler = RulerState()
+
     /** The stroke being drawn right now. */
     var livePage by mutableIntStateOf(-1)
     var liveBoard by mutableStateOf(false)
@@ -205,7 +209,9 @@ fun Modifier.inkInput(
     onPan: (Offset) -> Unit,
     onInkingChange: (Boolean) -> Unit,
     onInk: () -> Unit,
-): Modifier = pointerInput(page, board, session, settings, pen) {
+    /** Given where a stroke starts (local coordinates), a function that bends its points onto a ruler, or null. */
+    snapFor: ((Offset) -> ((Offset) -> Offset)?)? = null,
+): Modifier = pointerInput(page, board, session, settings, pen, snapFor) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val sample = pen.classify(down)
@@ -228,7 +234,7 @@ fun Modifier.inkInput(
         down.consume()
 
         when (action) {
-            Action.Pan -> trackPointer(id) { change -> onPan(change.positionChange()) }
+            Action.Pan -> trackPointer(id) { change -> if (!pen.multiTouchActive) onPan(change.positionChange()) }
             Action.Erase -> {
                 onInkingChange(true)
                 val radius = settings.eraserSize.dp.toPx() / w
@@ -238,6 +244,9 @@ fun Modifier.inkInput(
             }
             is Action.Draw -> {
                 onInkingChange(true)
+                // Highlighter and pen both follow the ruler when started against it.
+                val snap = snapFor?.invoke(down.position)
+                fun at(p: Offset) = snap?.invoke(p) ?: p
                 val isPen = action.tool == InkTool.PEN
                 session.livePage = page
                 session.liveBoard = board
@@ -246,12 +255,19 @@ fun Modifier.inkInput(
                 session.liveWidth = if (isPen) settings.penSize else settings.highlighterSize
                 session.livePressure = if (isPen) settings.pressure else 0f
                 session.livePoints.clear()
-                session.livePoints.addAll(listOf(down.position.x / w, down.position.y / w, sample.pressure))
-                trackPointer(id) { change ->
+                val first = at(down.position)
+                session.livePoints.addAll(listOf(first.x / w, first.y / w, sample.pressure))
+                val completed = trackPointer(id) { change ->
                     val p = pen.classify(change).pressure
                     // Include the samples the system batched between frames, for smooth curves.
-                    change.historical.forEach { h -> session.livePoints.addAll(listOf(h.position.x / w, h.position.y / w, p)) }
-                    session.livePoints.addAll(listOf(change.position.x / w, change.position.y / w, p))
+                    change.historical.forEach { h -> val q = at(h.position); session.livePoints.addAll(listOf(q.x / w, q.y / w, p)) }
+                    val q = at(change.position)
+                    session.livePoints.addAll(listOf(q.x / w, q.y / w, p))
+                }
+                if (!completed) {
+                    // A second finger turned this into a pinch: drop the half-drawn stroke.
+                    session.livePoints.clear(); session.livePage = -1; onInkingChange(false)
+                    return@awaitEachGesture
                 }
                 val pts = session.livePoints.toMutableList()
                 if (pts.size == 3) pts.addAll(listOf(pts[0] + 0.0005f, pts[1] + 0.0005f, pts[2])) // a tap leaves a dot
@@ -266,12 +282,17 @@ fun Modifier.inkInput(
     }
 }
 
-private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.trackPointer(id: PointerId, onMove: (PointerInputChange) -> Unit) {
+/**
+ * Follows one pointer until it lifts. Returns false if something earlier in the chain (the
+ * board's pinch or ruler handling) claimed the gesture first.
+ */
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.trackPointer(id: PointerId, onMove: (PointerInputChange) -> Unit): Boolean {
     while (true) {
         val event = awaitPointerEvent()
-        val change = event.changes.firstOrNull { it.id == id } ?: break
+        val change = event.changes.firstOrNull { it.id == id } ?: return true
+        if (change.isConsumed) return false
         if (!change.pressed) {
-            change.consume(); break
+            change.consume(); return true
         }
         if (change.positionChange() != Offset.Zero) onMove(change)
         change.consume()

@@ -24,9 +24,9 @@ Papers come from three free sources:
 |---|---|---|---|
 | ![](docs/screenshots/phone-home.png) | ![](docs/screenshots/phone-paper.png) | ![](docs/screenshots/phone-reader-ink.png) | ![](docs/screenshots/phone-reader-notes.png) |
 
-| Whiteboard split | Whiteboard full screen | Pen settings |
+| Whiteboard split | Ruler and zoom | Pen settings |
 |---|---|---|
-| ![](docs/screenshots/phone-board-split.png) | ![](docs/screenshots/phone-board-full.png) | ![](docs/screenshots/phone-pen-settings.png) |
+| ![](docs/screenshots/phone-board-split.png) | ![](docs/screenshots/phone-board-ruler-zoom.png) | ![](docs/screenshots/phone-pen-settings.png) |
 
 More in [docs/screenshots](docs/screenshots), including dark mode and the full Discover page.
 
@@ -61,6 +61,14 @@ More in [docs/screenshots](docs/screenshots), including dark mode and the full D
   the board to full screen. Sheets come in grid, lined, dotted or blank. Add as many as you need,
   or clear one (undo brings it back). The whiteboard uses the same pens and undo as the paper,
   and is saved with it.
+  - *Zoom:* pinch with two fingers (zooms around your fingers and pans as they move), Ctrl +
+    mouse wheel or a touchpad pinch, or the − 100% + control (tap the number to reset).
+    100–400%.
+  - *Ruler:* the ruler button lays a see-through ruler over the board, with millimetre ticks at
+    the sheet's scale. Drag it with a finger or mouse. Twist it with two fingers or the mouse
+    wheel; it clicks onto 15° steps, and tapping the angle in the middle steps through
+    0°/45°/90°/135°. Any pen or highlighter stroke started against either edge comes out
+    perfectly straight along it. The stylus always writes, even on top of the ruler.
   - *Palm-friendly by default:* only the stylus writes, while fingers and mouse scroll. The ✋
     button lets fingers and mouse write too (for devices without a pen).
   - *Typed notes:* a notes panel per paper, with a list of the pages you've written on.
@@ -80,7 +88,9 @@ on Windows normally sees a pen as a plain mouse. Folio listens to Windows' own p
 
 - **pressure**, so lines get thicker as you press;
 - the **eraser end** (flip the Surface Pen) and the **barrel button**, which erase;
-- **pen vs. finger**, so the pen writes while a finger or palm scrolls the page.
+- **pen vs. finger**, so the pen writes while a finger or palm scrolls the page;
+- **two-finger pinches** on the touchscreen, which Java doesn't deliver on its own; Folio
+  follows each touch contact and zooms the whiteboard.
 
 It also turns off Windows' press-and-hold right-click and flicks inside the window, so they don't
 interrupt handwriting. If any of this is unavailable, the pen falls back to working like a mouse.
@@ -90,8 +100,8 @@ interrupt handwriting. If any of this is unavailable, the pen falls back to work
 **Folio builds** run under the repository's **Actions** tab and download the **Folio-windows**
 artifact. It contains:
 
-- `Folio-1.1.0.msi`: per-user installer (no admin prompt), with Start-menu entry and desktop shortcut;
-- `Folio-1.1.0.exe`: the same as an .exe installer;
+- `Folio-1.3.0.msi`: per-user installer (no admin prompt), with Start-menu entry and desktop shortcut;
+- `Folio-1.3.0.exe`: the same as an .exe installer;
 - `Folio-windows-portable.zip`: no install; unzip and run `Folio.exe`.
 
 The installers aren't code-signed, so Windows SmartScreen may warn the first time: choose
@@ -138,8 +148,10 @@ Requires JDK 17+. Android also needs the Android SDK (platform 35).
 
 The screenshot tour drives the real app headlessly at phone and desktop sizes against the live
 APIs. Along the way it downloads a real PDF, opens it in the reader and writes on it with
-injected pointer input. On the Windows CI runner, `WindowsPenTest` injects a synthetic pen through
-Windows' own input stack and checks that Folio reads pen, pressure and the eraser end.
+injected pointer input, draws along the ruler (and checks the line is straight), and pinches
+the whiteboard with two fingers. On the Windows CI runner, `WindowsPenTest` injects a synthetic pen
+and a two-finger touch pinch through Windows' own input stack, and checks that Folio reads pen,
+pressure, the eraser end and the pinch.
 
 ## Notes
 
