@@ -145,7 +145,19 @@ object WindowsPen : PenInput {
     @Volatile
     private var penLastSeen = 0L
 
-    private val penNear: Boolean get() = penInRange && System.currentTimeMillis() - penLastSeen < PEN_NEAR_MS
+    /** When the pen last left range. */
+    @Volatile
+    private var penLeftAt = 0L
+
+    /**
+     * In range (recently heard from), or left range within [PEN_GRACE_MS]: Windows can report the
+     * pen leaving at the very moment a palm lands, so a short grace keeps that palm ignored.
+     */
+    private val penNear: Boolean
+        get() {
+            val now = System.currentTimeMillis()
+            return (penInRange && now - penLastSeen < PEN_NEAR_MS) || now - penLeftAt < PEN_GRACE_MS
+        }
 
     /** Whether touch is currently being ignored because the pen is near, for diagnostics and tests. */
     val penIsNear: Boolean get() = penNear
@@ -234,6 +246,7 @@ object WindowsPen : PenInput {
         val pressure = pressureOf(info)
         // Keep the state "in range" through pen-up so the trailing mouse-up still reads as pen.
         state = State(kind, pressure, inRange = !ending, time = now)
+        if (ending && penInRange) penLeftAt = now
         penInRange = !ending
         penLastSeen = now
         if (penNear && mode != Mode.IDLE && mode != Mode.BLOCKED) endGesture()
@@ -389,6 +402,7 @@ object WindowsPen : PenInput {
     private const val TABLET_FLAGS = 0x00000001L or 0x00000008L or 0x00000010L or 0x00010000L
     private const val TOUCH_SLOP = 10f
     private const val PEN_NEAR_MS = 1000L
+    private const val PEN_GRACE_MS = 500L
 
     @Suppress("FunctionName")
     private interface Win32 : StdCallLibrary {
