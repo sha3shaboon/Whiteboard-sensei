@@ -218,6 +218,18 @@ object WindowsPen : PenInput {
         }
     }
 
+    // ---- Diagnostics: the last few pointer messages, for tests
+
+    private val trace = java.util.concurrent.ConcurrentLinkedDeque<String>()
+
+    /** Recent pointer messages as text (type, message, id, pen-near), oldest first. */
+    fun recentMessages(): List<String> = trace.toList()
+
+    private fun note(text: String) {
+        trace.addLast("${System.currentTimeMillis() % 100000} $text")
+        while (trace.size > 60) trace.pollFirst()
+    }
+
     // ---- Message handling
 
     private fun onPointer(msg: Int, w: WPARAM) {
@@ -225,7 +237,9 @@ object WindowsPen : PenInput {
         val type = IntByReference()
         val now = System.currentTimeMillis()
         val ending = msg == WM_POINTERLEAVE || msg == WM_POINTERCAPTURECHANGED
-        if (!Win32.INSTANCE.GetPointerType(id, type)) {
+        val known = Win32.INSTANCE.GetPointerType(id, type)
+        note("msg=0x${msg.toString(16)} id=$id type=${if (known) type.value else -1} near=$penNear inRange=$penInRange")
+        if (!known) {
             // By the time a pointer lifts Windows may no longer describe it; still let go of it,
             // or a finger would stay "down" forever and every later touch would look like two.
             if ((ending || msg == WM_POINTERUP) && touches.containsKey(id)) onTouch(id, msg)
