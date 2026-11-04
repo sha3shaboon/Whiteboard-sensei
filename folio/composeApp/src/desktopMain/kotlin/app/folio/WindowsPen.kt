@@ -110,6 +110,7 @@ object WindowsPen : PenInput {
     // ---- Touch gestures
 
     private val touches = ConcurrentHashMap<Int, Offset>()
+    private val touchSeen = ConcurrentHashMap<Int, Long>()
     private val _gestures = MutableSharedFlow<TouchGesture>(extraBufferCapacity = 256)
     override val touchGestures: Flow<TouchGesture> = _gestures
 
@@ -222,9 +223,14 @@ object WindowsPen : PenInput {
     private fun onPointer(msg: Int, w: WPARAM) {
         val id = (w.toLong() and 0xFFFF).toInt()
         val type = IntByReference()
-        if (!Win32.INSTANCE.GetPointerType(id, type)) return
         val now = System.currentTimeMillis()
         val ending = msg == WM_POINTERLEAVE || msg == WM_POINTERCAPTURECHANGED
+        if (!Win32.INSTANCE.GetPointerType(id, type)) {
+            // By the time a pointer lifts Windows may no longer describe it; still let go of it,
+            // or a finger would stay "down" forever and every later touch would look like two.
+            if ((ending || msg == WM_POINTERUP) && touches.containsKey(id)) onTouch(id, msg)
+            return
+        }
         when (type.value) {
             PT_PEN -> onPen(id, msg, ending, now)
             PT_TOUCH -> {
@@ -311,12 +317,17 @@ object WindowsPen : PenInput {
     private fun onTouch(id: Int, msg: Int) {
         val info = PointerInfo()
         val up = msg == WM_POINTERUP || msg == WM_POINTERLEAVE || msg == WM_POINTERCAPTURECHANGED
+        val now = System.currentTimeMillis()
+        // Drop contacts not heard from in a while (a lift Windows never reported).
+        touchSeen.entries.removeIf { (k, t) -> k != id && now - t > STALE_TOUCH_MS && touches.remove(k) != null }
         if (!up && Win32.INSTANCE.GetPointerInfo(id, info) && info.pointerFlags and POINTER_FLAG_INCONTACT != 0) {
             // A fresh touch (no fingers down before): start the diagnostics from zero.
             if (touches.isEmpty()) { panTotal = Offset.Zero; pinchScaleTotal = 1f; lastTouchBlocked = penNear }
             touches[id] = toSurface(info)
+            touchSeen[id] = now
         } else {
             touches.remove(id)
+            touchSeen.remove(id)
         }
         val ids = touches.keys.sorted()
         if (ids.isEmpty()) {
@@ -403,6 +414,7 @@ object WindowsPen : PenInput {
     private const val TOUCH_SLOP = 10f
     private const val PEN_NEAR_MS = 1000L
     private const val PEN_GRACE_MS = 500L
+    private const val STALE_TOUCH_MS = 2000L
 
     @Suppress("FunctionName")
     private interface Win32 : StdCallLibrary {
