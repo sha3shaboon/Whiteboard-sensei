@@ -135,8 +135,17 @@ object WindowsPen : PenInput {
     var panTotal: Offset = Offset.Zero
         private set
 
+    /**
+     * The pen counts as near (blocking touch, for palm rejection) until it leaves range, or at
+     * most [PEN_NEAR_MS] after its last message, so a missed "left range" can't block touch forever.
+     */
     @Volatile
-    private var penNear = false
+    private var penInRange = false
+
+    @Volatile
+    private var penLastSeen = 0L
+
+    private val penNear: Boolean get() = penInRange && System.currentTimeMillis() - penLastSeen < PEN_NEAR_MS
 
     // ---- Installation
 
@@ -217,7 +226,8 @@ object WindowsPen : PenInput {
         val pressure = pressureOf(info)
         // Keep the state "in range" through pen-up so the trailing mouse-up still reads as pen.
         state = State(kind, pressure, inRange = !ending, time = now)
-        penNear = !ending
+        penInRange = !ending
+        penLastSeen = now
         if (penNear && mode != Mode.IDLE && mode != Mode.BLOCKED) endGesture()
 
         // Precise samples while touching: every batched frame since the last message, in order.
@@ -368,6 +378,7 @@ object WindowsPen : PenInput {
     private const val PEN_MASK_PRESSURE = 0x1
     private const val TABLET_FLAGS = 0x00000001L or 0x00000008L or 0x00000010L or 0x00010000L
     private const val TOUCH_SLOP = 10f
+    private const val PEN_NEAR_MS = 1000L
 
     @Suppress("FunctionName")
     private interface Win32 : StdCallLibrary {
