@@ -20,7 +20,7 @@ fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
         state = state,
-        title = "Folio",
+        title = "Waraq",
         icon = painterResource("folio-icon.png"),
         onPreviewKeyEvent = { e ->
             // Esc (or Alt+Left) goes back, like the system back on a phone.

@@ -78,6 +78,7 @@ import app.folio.ink.BOARD_MAX_ZOOM
 import app.folio.ink.BOARD_MIN_ZOOM
 import app.folio.ink.InkSession
 import app.folio.ink.InkSettings
+import app.folio.ink.GesturePhase
 import app.folio.ink.InputKind
 import app.folio.ink.PenInput
 import app.folio.ink.RulerState
@@ -179,13 +180,23 @@ fun Whiteboard(
                     listState.scrollToItem(index, (rel - index * (sheetH + gapPx)).toInt().coerceAtLeast(0))
                 }
             }
-            // Windows reports touch pinches outside Compose; route them here.
-            LaunchedEffect(pen) {
-                pen.pinches?.collect { p ->
-                    val vc = viewport.value ?: return@collect
-                    if (!vc.isAttached) return@collect
-                    val local = vc.windowToLocal(p.centroid)
-                    if (local.x in 0f..viewW && local.y in 0f..viewH) zoomBy(p.scale, local, p.pan)
+            // Windows: touch arrives through the pen hook (Java sees no touch drags or multi-touch).
+            // One finger pans the board or drags the ruler; two pinch-zoom, or twist the ruler.
+            var onRuler by remember { mutableStateOf(false) }
+            PlatformTouch(pen, { viewport.value }) { t ->
+                val g = t.gesture
+                if (g.phase == GesturePhase.START) onRuler = ruler.hitsBody(t.start)
+                when {
+                    g.phase != GesturePhase.MOVE -> pinching = g.phase == GesturePhase.START && g.fingers >= 2
+                    onRuler -> {
+                        ruler.moveBy(g.pan)
+                        if (g.fingers >= 2) ruler.rotateBy(g.rotation)
+                    }
+                    g.fingers >= 2 -> zoomBy(g.scale, t.centroid, g.pan)
+                    else -> {
+                        listState.dispatchRawDelta(-g.pan.y)
+                        hScroll.dispatchRawDelta(-g.pan.x)
+                    }
                 }
             }
 

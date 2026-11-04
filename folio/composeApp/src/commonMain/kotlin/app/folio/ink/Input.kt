@@ -14,23 +14,43 @@ data class PointerSample(val kind: InputKind, val pressure: Float)
  * Turns pointer events into "stylus / eraser / finger / mouse" plus pressure. Android reports this
  * directly; Windows needs help because Java sees the Surface Pen as a mouse (see WindowsPen).
  */
+enum class GesturePhase { START, MOVE, END }
+
 /**
- * One step of a two-finger pinch reported by the platform (Windows, where Compose doesn't see
- * multi-touch). [centroid] is in window pixels; [scale] is this step's change in finger distance.
+ * Touch gestures the platform recognises itself, outside Compose's pointer events (Windows, where
+ * Java sees neither touch drags nor multi-touch). Positions are in window pixels.
+ *
+ * One finger pans; two fingers pinch (scale), twist (rotation) and pan together. [id] ties the
+ * steps of one gesture together, so a surface can claim it at START and follow it to END.
  */
-data class Pinch(val scale: Float, val centroid: Offset, val pan: Offset)
+data class TouchGesture(
+    val id: Int,
+    val phase: GesturePhase,
+    val fingers: Int,
+    val start: Offset,
+    val centroid: Offset,
+    val pan: Offset = Offset.Zero,
+    val scale: Float = 1f,
+    val rotation: Float = 0f,
+)
+
+/** A precise pen position (window pixels, sub-pixel) and pressure, straight from the platform. */
+data class PenSample(val position: Offset, val pressure: Float)
 
 interface PenInput {
     fun classify(change: PointerInputChange): PointerSample
 
-    /** True where touch drags don't scroll lists by themselves (desktop), so the reader pans manually. */
+    /** True where touch drags don't scroll lists by themselves and nothing else handles them. */
     val manualTouchScroll: Boolean get() = false
 
-    /** Pinches the platform detects outside Compose's own pointer events, if any. */
-    val pinches: Flow<Pinch>? get() = null
+    /** Touch gestures recognised by the platform, if it does that (see [TouchGesture]). */
+    val touchGestures: Flow<TouchGesture>? get() = null
 
-    /** True while two or more fingers are down (as seen by the platform), to pause one-finger panning. */
-    val multiTouchActive: Boolean get() = false
+    /**
+     * Precise pen samples received since the last call, oldest first, or null if the platform
+     * doesn't provide them (then Compose's own positions are used).
+     */
+    fun drainPenSamples(): List<PenSample>? = null
 }
 
 /** Uses what Compose reports: right on Android, everything looks like a mouse on desktop. */

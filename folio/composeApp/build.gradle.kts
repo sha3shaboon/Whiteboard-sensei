@@ -65,8 +65,8 @@ android {
         applicationId = "app.folio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
     }
     sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
     sourceSets["main"].res.srcDirs("src/androidMain/res")
@@ -94,18 +94,18 @@ compose.desktop {
         mainClass = "app.folio.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
-            packageName = "Folio"
-            packageVersion = "1.3.0"
+            packageName = "Waraq"
+            packageVersion = "1.4.0"
             description = "A library of new open-access research papers"
-            vendor = "Folio"
-            copyright = "Folio. Paper data from arXiv, Europe PMC and OpenAlex."
+            vendor = "Waraq"
+            copyright = "Waraq. Paper data from arXiv, Europe PMC and OpenAlex."
             // suggestRuntimeModules, plus TLS elliptic curves (HTTPS) and DNS for the paper APIs.
             modules("java.instrument", "java.management", "jdk.unsupported", "jdk.crypto.ec", "java.naming")
 
             windows {
                 iconFile.set(rootProject.file("icons/folio.ico"))
                 menu = true
-                menuGroup = "Folio"
+                menuGroup = "Waraq"
                 shortcut = true
                 // Installs for the current user: no administrator prompt.
                 perUserInstall = true
@@ -122,6 +122,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("live", System.getProperty("live") ?: "false")
     System.getProperty("openalexKey")?.let { systemProperty("openalexKey", it) }
     System.getProperty("shotsDir")?.let { systemProperty("shotsDir", it) }
+    System.getProperty("samplePdf")?.let { systemProperty("samplePdf", it) }
     testLogging { showStandardStreams = true }
 }
 

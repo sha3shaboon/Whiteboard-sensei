@@ -63,10 +63,10 @@ fun Sidebar() {
         Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 22.dp, vertical = 28.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-                    Text("F", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
+                    Text("W", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp, style = MaterialTheme.typography.titleMedium)
                 }
                 Spacer(Modifier.width(10.dp))
-                Text("FOLIO", style = MaterialTheme.typography.titleMedium, letterSpacing = 2.sp)
+                Text("WARAQ", style = MaterialTheme.typography.titleMedium, letterSpacing = 2.sp)
             }
             Spacer(Modifier.height(36.dp))
             Text("MENU", style = MaterialTheme.typography.labelSmall, color = Folio.colors.muted)

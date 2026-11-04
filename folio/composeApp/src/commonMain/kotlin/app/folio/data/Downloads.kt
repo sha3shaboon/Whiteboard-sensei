@@ -79,7 +79,7 @@ class Downloads(
         jobs[paper.id] = scope.launch {
             try {
                 val response = http.get(url) {
-                    header("User-Agent", "Mozilla/5.0 (Folio paper reader)")
+                    header("User-Agent", "Mozilla/5.0 (Waraq paper reader)")
                     header("Accept", "application/pdf,*/*")
                     onDownload { sent, total ->
                         val p = total?.takeIf { it > 0 }?.let { sent.toFloat() / it }

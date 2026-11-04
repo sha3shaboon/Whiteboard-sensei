@@ -85,9 +85,13 @@ class ScreenshotTour {
     }
 
     @Test fun c_phonePaper() {
-        val paper = graph.home.feed.state.value.papers.firstOrNull { it.pdfUrl?.contains("arxiv") == true } ?: return
+        // An arXiv paper (reliable PDFs). If the feed has none right now, ask arXiv directly.
+        val paper = graph.home.feed.state.value.papers.firstOrNull { it.pdfUrl?.contains("arxiv") == true }
+            ?: kotlinx.coroutines.runBlocking { graph.repository.search("quantum error correction", only = app.folio.data.Source.ARXIV).loadMore().papers.firstOrNull() }
+            ?: localSample()
+            ?: return
         graph.store.save(paper)
-        graph.downloads.fetch(paper, keep = true)
+        if (!graph.downloads.isOnDevice(paper.id)) graph.downloads.fetch(paper, keep = true) else graph.downloads.keepCached(paper)
         readPaperId = paper.id
         shot("phone-paper", 400, 860, start = Screen.PaperDetail(paper.id), ready = { graph.store.entry(paper.id)?.downloaded == true }, settle = 800)
         shot("desktop-paper", 1360, 860, scale = 1.5f, start = Screen.PaperDetail(paper.id))
@@ -102,6 +106,25 @@ class ScreenshotTour {
         println("pdf pages=${doc.pageCount} ratio=${doc.aspectRatio(0)}")
         ImageIO.write(doc.render(0, 900).toAwtImage(), "png", File(out, "pdf-page1.png"))
         doc.close()
+    }
+
+    /**
+     * When arXiv is unreachable, a PDF given with -DsamplePdf=... stands in, placed in the reading
+     * cache as if it had just been downloaded.
+     */
+    private fun localSample(): app.folio.data.Paper? {
+        val file = System.getProperty("samplePdf")?.let(::File)?.takeIf { it.exists() } ?: return null
+        val paper = app.folio.data.Paper(
+            id = "arxiv:2610.42150", source = app.folio.data.Source.ARXIV,
+            title = "Secret-shared teleportation of a two-qudit gate with a deferred recipient",
+            authors = listOf("Tanay Roy"), abstract = "An unknown quantum operation, like an unknown quantum state, cannot be perfectly copied or stored for later use.",
+            published = "2026-10-30", landingUrl = "https://arxiv.org/abs/2610.42150", pdfUrl = "https://arxiv.org/pdf/2610.42150", tags = listOf("quant-ph"),
+        )
+        val target = java.io.File(graph.downloads.fileFor(paper.id).toString())
+        target.parentFile.mkdirs()
+        file.copyTo(target, overwrite = true)
+        println("using local sample PDF (arXiv unavailable)")
+        return paper
     }
 
     /** Writes on the page with injected pointer input, then checks the strokes were saved. */

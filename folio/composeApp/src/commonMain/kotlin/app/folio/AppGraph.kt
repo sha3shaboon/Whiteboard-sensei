@@ -32,6 +32,8 @@ class AppGraph(val platform: Platform, val scope: CoroutineScope) {
     val http = HttpClient {
         install(HttpTimeout) {
             connectTimeoutMillis = 15_000
+            // arXiv can take well over 10 s (the default) to answer a feed query; don't drop it.
+            socketTimeoutMillis = 30_000
             requestTimeoutMillis = 90_000
         }
     }

@@ -234,7 +234,7 @@ fun Modifier.inkInput(
         down.consume()
 
         when (action) {
-            Action.Pan -> trackPointer(id) { change -> if (!pen.multiTouchActive) onPan(change.positionChange()) }
+            Action.Pan -> trackPointer(id) { change -> onPan(change.positionChange()) }
             Action.Erase -> {
                 onInkingChange(true)
                 val radius = settings.eraserSize.dp.toPx() / w
@@ -257,12 +257,36 @@ fun Modifier.inkInput(
                 session.livePoints.clear()
                 val first = at(down.position)
                 session.livePoints.addAll(listOf(first.x / w, first.y / w, sample.pressure))
+
+                // Where the platform has precise pen samples (Windows), use them instead of
+                // Compose's whole-pixel positions: same timing, sub-pixel accuracy, more samples.
+                // They're in window pixels, so map them by the offset seen at pen-down.
+                var offset: Offset? = null
+                if (sample.kind == InputKind.STYLUS) {
+                    pen.drainPenSamples()?.lastOrNull()?.let { offset = down.position - it.position }
+                }
+                fun add(local: Offset, pressure: Float) {
+                    val q = at(local)
+                    session.livePoints.addAll(listOf(q.x / w, q.y / w, pressure))
+                }
                 val completed = trackPointer(id) { change ->
-                    val p = pen.classify(change).pressure
-                    // Include the samples the system batched between frames, for smooth curves.
-                    change.historical.forEach { h -> val q = at(h.position); session.livePoints.addAll(listOf(q.x / w, q.y / w, p)) }
-                    val q = at(change.position)
-                    session.livePoints.addAll(listOf(q.x / w, q.y / w, p))
+                    val o = offset
+                    val precise = if (o != null) pen.drainPenSamples() else null
+                    if (o != null && !precise.isNullOrEmpty()) {
+                        // Sanity check: if the newest precise sample isn't near Compose's position,
+                        // the two disagree on scale; fall back to Compose for the rest of the stroke.
+                        if ((precise.last().position + o - change.position).getDistance() > 6.dp.toPx()) {
+                            offset = null
+                            add(change.position, pen.classify(change).pressure)
+                        } else {
+                            precise.forEach { add(it.position + o, it.pressure) }
+                        }
+                    } else {
+                        val p = pen.classify(change).pressure
+                        // Include the samples the system batched between frames, for smooth curves.
+                        change.historical.forEach { h -> add(h.position, p) }
+                        add(change.position, p)
+                    }
                 }
                 if (!completed) {
                     // A second finger turned this into a pinch: drop the half-drawn stroke.
@@ -305,17 +329,26 @@ fun DrawScope.drawStrokes(strokes: List<InkStroke>) {
 }
 
 /**
- * Draws one stroke. With [sensitivity] > 0 and real pressure samples, the width follows the pen:
- * at full sensitivity a light touch is about a third of the set width and a firm one about 1.25×.
+ * Draws one stroke as a smooth shape.
+ *
+ * Smoothing happens only while drawing, never by waiting: interior points are softened against
+ * their neighbours and the line between samples follows a Catmull-Rom curve, but the newest point
+ * is drawn exactly where the pen is, so the tip never lags. Pressure strokes are filled as one
+ * outline whose edges are curves, rather than a chain of round dots, so they don't look beaded.
+ *
+ * With [sensitivity] > 0 and real pressure, the width follows the pen: at full sensitivity a
+ * light touch is about a third of the set width and a firm one about 1.25x.
  */
 fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<Float>, sensitivity: Float = 1f) {
     val w = size.width
     if (points.size < 6) return
+    val line = smoothLine(points, w)
+    val n = line.size / 3
+    if (n < 2) return
     if (tool == InkTool.HIGHLIGHTER) {
         val path = Path().apply {
-            moveTo(points[0] * w, points[1] * w)
-            var i = 3
-            while (i + 1 < points.size) { lineTo(points[i] * w, points[i + 1] * w); i += 3 }
+            moveTo(line[0], line[1])
+            for (i in 1 until n) lineTo(line[i * 3], line[i * 3 + 1])
         }
         drawPath(path, Color(color).copy(alpha = 0.55f), style = Stroke(width * w, cap = StrokeCap.Square, join = StrokeJoin.Round), blendMode = BlendMode.Multiply)
         return
@@ -324,29 +357,96 @@ fun DrawScope.drawStroke(tool: InkTool, color: Long, width: Float, points: List<
     val c = Color(color)
     val uniform = sensitivity <= 0.01f || (2 until points.size step 3).all { points[it] >= 0.99f }
     if (uniform) {
-        // Constant width (mouse, pressure off): one smooth path through midpoints.
         val path = Path().apply {
-            moveTo(points[0] * w, points[1] * w)
-            var i = 3
-            while (i + 4 < points.size) {
-                val mx = (points[i] + points[i + 3]) / 2 * w
-                val my = (points[i + 1] + points[i + 4]) / 2 * w
-                quadraticTo(points[i] * w, points[i + 1] * w, mx, my)
-                i += 3
-            }
-            lineTo(points[points.size - 3] * w, points[points.size - 2] * w)
+            moveTo(line[0], line[1])
+            for (i in 1 until n) lineTo(line[i * 3], line[i * 3 + 1])
         }
         drawPath(path, c, style = Stroke(base, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    } else {
-        var i = 0
-        while (i + 5 < points.size) {
-            val p = (points[i + 2] + points[i + 5]) / 2
-            val factor = (1f - sensitivity) + sensitivity * (0.35f + 0.9f * p)
-            drawLine(
-                c, Offset(points[i] * w, points[i + 1] * w), Offset(points[i + 3] * w, points[i + 4] * w),
-                strokeWidth = base * factor, cap = StrokeCap.Round,
-            )
-            i += 3
+        return
+    }
+    // Half-widths along the line, from pressure, eased so width changes are gradual.
+    val half = FloatArray(n)
+    var eased = line[2]
+    for (i in 0 until n) {
+        eased += (line[i * 3 + 2] - eased) * 0.45f
+        half[i] = base * ((1f - sensitivity) + sensitivity * (0.35f + 0.9f * eased)) / 2f
+    }
+    drawPath(outline(line, half), c)
+    // Round ends.
+    drawCircle(c, half[0], Offset(line[0], line[1]))
+    drawCircle(c, half[n - 1], Offset(line[(n - 1) * 3], line[(n - 1) * 3 + 1]))
+}
+
+/**
+ * Turns a stroke's samples (page-width units) into a dense, smooth centre line in pixels:
+ * (x, y, pressure) triples. Interior points are averaged with their neighbours (the last point is
+ * kept exactly), then gaps wider than a few pixels are filled along a Catmull-Rom curve.
+ */
+internal fun smoothLine(points: List<Float>, w: Float): FloatArray {
+    val n = points.size / 3
+    val xs = FloatArray(n) { points[it * 3] * w }
+    val ys = FloatArray(n) { points[it * 3 + 1] * w }
+    val ps = FloatArray(n) { points[it * 3 + 2] }
+    // Drop repeats (pen resting), which would give zero-length segments and spiky normals.
+    val keep = ArrayList<Int>(n)
+    for (i in 0 until n) {
+        if (keep.isEmpty() || hypot(xs[i] - xs[keep.last()], ys[i] - ys[keep.last()]) > 0.35f || i == n - 1) keep += i
+    }
+    val m = keep.size
+    val sx = FloatArray(m); val sy = FloatArray(m); val sp = FloatArray(m)
+    for (k in 0 until m) {
+        val i = keep[k]
+        if (k == 0 || k == m - 1) { sx[k] = xs[i]; sy[k] = ys[i] } else {
+            val a = keep[k - 1]; val b = keep[k + 1]
+            sx[k] = (xs[a] + 2 * xs[i] + xs[b]) / 4f
+            sy[k] = (ys[a] + 2 * ys[i] + ys[b]) / 4f
         }
+        sp[k] = ps[i]
+    }
+    if (m == 1) return floatArrayOf(sx[0], sy[0], sp[0], sx[0] + 0.01f, sy[0], sp[0])
+    val out = ArrayList<Float>(m * 6)
+    for (k in 0 until m - 1) {
+        val k0 = maxOf(0, k - 1); val k3 = minOf(m - 1, k + 2)
+        val dist = hypot(sx[k + 1] - sx[k], sy[k + 1] - sy[k])
+        val steps = (dist / 3f).toInt().coerceIn(1, 24)
+        for (j in 0 until steps) {
+            val t = j / steps.toFloat()
+            out += catmull(sx[k0], sx[k], sx[k + 1], sx[k3], t)
+            out += catmull(sy[k0], sy[k], sy[k + 1], sy[k3], t)
+            out += sp[k] + (sp[k + 1] - sp[k]) * t
+        }
+    }
+    out += sx[m - 1]; out += sy[m - 1]; out += sp[m - 1]
+    return out.toFloatArray()
+}
+
+private fun catmull(p0: Float, p1: Float, p2: Float, p3: Float, t: Float): Float {
+    val t2 = t * t
+    val t3 = t2 * t
+    return 0.5f * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+}
+
+/** Filled outline of a variable-width line: left edge forward, right edge back, both as curves. */
+private fun outline(line: FloatArray, half: FloatArray): Path {
+    val n = half.size
+    val lx = FloatArray(n); val ly = FloatArray(n); val rx = FloatArray(n); val ry = FloatArray(n)
+    for (i in 0 until n) {
+        val a = maxOf(0, i - 1); val b = minOf(n - 1, i + 1)
+        var tx = line[b * 3] - line[a * 3]
+        var ty = line[b * 3 + 1] - line[a * 3 + 1]
+        val len = hypot(tx, ty).takeIf { it > 1e-4f } ?: 1f
+        tx /= len; ty /= len
+        val x = line[i * 3]; val y = line[i * 3 + 1]
+        lx[i] = x - ty * half[i]; ly[i] = y + tx * half[i]
+        rx[i] = x + ty * half[i]; ry[i] = y - tx * half[i]
+    }
+    return Path().apply {
+        moveTo(lx[0], ly[0])
+        for (i in 1 until n - 1) quadraticTo(lx[i], ly[i], (lx[i] + lx[i + 1]) / 2, (ly[i] + ly[i + 1]) / 2)
+        lineTo(lx[n - 1], ly[n - 1])
+        lineTo(rx[n - 1], ry[n - 1])
+        for (i in n - 2 downTo 1) quadraticTo(rx[i], ry[i], (rx[i] + rx[i - 1]) / 2, (ry[i] + ry[i - 1]) / 2)
+        lineTo(rx[0], ry[0])
+        close()
     }
 }

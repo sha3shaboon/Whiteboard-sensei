@@ -89,12 +89,15 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.folio.AppScope
 import app.folio.LocalApp
 import app.folio.PdfDocument
+import app.folio.ink.GesturePhase
 import app.folio.ink.InkSession
 import app.folio.ink.InkSettings
 import app.folio.ink.drawStroke
@@ -335,7 +338,15 @@ private fun Pages(
 ) {
     val app = LocalApp.current
     val pen = app.graph.platform.pen
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val viewport = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // Windows: one- or two-finger touch drags scroll the paper (Java doesn't deliver them).
+    PlatformTouch(pen, { viewport[0] }) { t ->
+        if (t.gesture.phase == GesturePhase.MOVE) {
+            listState.dispatchRawDelta(-t.gesture.pan.y)
+            hScroll.dispatchRawDelta(-t.gesture.pan.x)
+        }
+    }
+    BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { viewport[0] = it }) {
         val available = maxWidth
         // Fit to width on phones; a comfortable reading column on wide screens.
         val base = minOf(available - 16.dp, 860.dp)

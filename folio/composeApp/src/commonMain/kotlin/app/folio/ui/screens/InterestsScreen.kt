@@ -86,12 +86,12 @@ fun InterestsScreen(onboarding: Boolean) {
             item {
                 Column(Modifier.windowInsetsPadding(WindowInsets.statusBars).padding(start = pad, end = pad, top = if (onboarding) 48.dp else 24.dp)) {
                     if (onboarding) {
-                        Text("WELCOME TO FOLIO", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                        Text("WELCOME TO WARAQ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                         Spacer(Modifier.height(6.dp))
                         Text("What are you\ncurious about?", style = MaterialTheme.typography.displaySmall)
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "Type anything at all, or pick from the fields below. Folio gathers the newest open papers on them from arXiv, Europe PMC and OpenAlex.",
+                            "Type anything at all, or pick from the fields below. Waraq gathers the newest open papers on them from arXiv, Europe PMC and OpenAlex.",
                             style = MaterialTheme.typography.bodyMedium, color = Folio.colors.muted, modifier = Modifier.widthIn(max = 560.dp),
                         )
                     } else {

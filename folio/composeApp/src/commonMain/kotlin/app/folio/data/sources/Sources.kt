@@ -44,7 +44,7 @@ interface PaperSource {
 class HttpException(val code: Int, message: String) : Exception(message)
 
 internal suspend fun HttpClient.getText(url: String): String {
-    val response = get(url) { header("User-Agent", "Folio/0.2 (open papers reader)") }
+    val response = get(url) { header("User-Agent", "Waraq/1.4 (open papers reader)") }
     if (!response.status.isSuccess()) {
         throw HttpException(response.status.value, "HTTP ${response.status.value} from ${URLBuilder(url).host}")
     }

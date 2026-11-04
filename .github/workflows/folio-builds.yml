@@ -1,6 +1,6 @@
-name: Folio builds
+name: Waraq builds
 
-# Builds the Folio apps on the platforms that can package them:
+# Builds the Waraq apps on the platforms that can package them:
 # Windows installers (.msi, .exe) and a portable zip, plus the Android APK.
 on:
   push:
@@ -33,14 +33,14 @@ jobs:
         run: ./gradlew :composeApp:packageMsi :composeApp:packageExe :composeApp:createDistributable --no-daemon
       - name: Zip the portable app
         shell: pwsh
-        run: Compress-Archive -Path composeApp/build/compose/binaries/main/app/Folio -DestinationPath composeApp/build/Folio-windows-portable.zip
+        run: Compress-Archive -Path composeApp/build/compose/binaries/main/app/Waraq -DestinationPath composeApp/build/Waraq-windows-portable.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: Folio-windows
+          name: Waraq-windows
           path: |
             folio/composeApp/build/compose/binaries/main/msi/*.msi
             folio/composeApp/build/compose/binaries/main/exe/*.exe
-            folio/composeApp/build/Folio-windows-portable.zip
+            folio/composeApp/build/Waraq-windows-portable.zip
           if-no-files-found: error
 
   android:
@@ -60,6 +60,6 @@ jobs:
         run: ./gradlew :composeApp:assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: Folio-android
+          name: Waraq-android
           path: folio/composeApp/build/outputs/apk/release/*.apk
           if-no-files-found: error

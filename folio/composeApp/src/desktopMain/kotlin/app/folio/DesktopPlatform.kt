@@ -47,16 +47,22 @@ class DesktopPlatform(override val dataDir: Path = defaultDataDir()) : Platform 
     }
 
     companion object {
-        /** The usual per-user app data folder on each desktop OS. */
+        /**
+         * The usual per-user app data folder on each desktop OS. The app used to be called Folio;
+         * an existing Folio folder is moved over so the library and notes carry on.
+         */
         fun defaultDataDir(): Path {
             val home = System.getProperty("user.home")
             val os = System.getProperty("os.name").lowercase()
-            val dir = when {
-                os.contains("mac") -> "$home/Library/Application Support/Folio"
-                os.contains("win") -> (System.getenv("APPDATA") ?: "$home/AppData/Roaming") + "/Folio"
-                else -> (System.getenv("XDG_DATA_HOME") ?: "$home/.local/share") + "/folio"
+            fun dir(name: String) = when {
+                os.contains("mac") -> "$home/Library/Application Support/$name"
+                os.contains("win") -> (System.getenv("APPDATA") ?: "$home/AppData/Roaming") + "/$name"
+                else -> (System.getenv("XDG_DATA_HOME") ?: "$home/.local/share") + "/" + name.lowercase()
             }
-            return dir.toPath()
+            val current = File(dir("Waraq"))
+            val old = File(dir("Folio"))
+            if (!current.exists() && old.isDirectory) runCatching { old.renameTo(current) }
+            return current.path.toPath()
         }
     }
 }

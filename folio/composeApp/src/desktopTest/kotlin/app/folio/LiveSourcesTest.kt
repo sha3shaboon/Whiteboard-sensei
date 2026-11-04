@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 
 /** Hits the real APIs, so it only runs when asked: ./gradlew desktopTest -Dlive=true */
 class LiveSourcesTest {
-    private val http = HttpClient()
+    private val http = HttpClient { install(io.ktor.client.plugins.HttpTimeout) { socketTimeoutMillis = 30_000; requestTimeoutMillis = 90_000 } }
     private val json = Json { ignoreUnknownKeys = true }
     private val live = System.getProperty("live") == "true"
 
