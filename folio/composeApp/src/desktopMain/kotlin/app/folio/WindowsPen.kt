@@ -222,6 +222,11 @@ object WindowsPen : PenInput {
 
     private val trace = java.util.concurrent.ConcurrentLinkedDeque<String>()
 
+    /** Clears the gesture diagnostics, for tests. */
+    fun resetDiagnostics() {
+        panTotal = Offset.Zero; pinchScaleTotal = 1f; lastTouchBlocked = false
+    }
+
     /** Recent pointer messages as text (type, message, id, pen-near), oldest first. */
     fun recentMessages(): List<String> = trace.toList()
 
