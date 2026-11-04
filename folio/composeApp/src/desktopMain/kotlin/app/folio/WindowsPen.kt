@@ -291,6 +291,8 @@ object WindowsPen : PenInput {
         val info = PointerInfo()
         val up = msg == WM_POINTERUP || msg == WM_POINTERLEAVE || msg == WM_POINTERCAPTURECHANGED
         if (!up && Win32.INSTANCE.GetPointerInfo(id, info) && info.pointerFlags and POINTER_FLAG_INCONTACT != 0) {
+            // A fresh touch (no fingers down before): start the diagnostics from zero.
+            if (touches.isEmpty()) { panTotal = Offset.Zero; pinchScaleTotal = 1f }
             touches[id] = toSurface(info)
         } else {
             touches.remove(id)
