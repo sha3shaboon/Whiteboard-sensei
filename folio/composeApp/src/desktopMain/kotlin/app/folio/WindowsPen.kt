@@ -89,16 +89,24 @@ object WindowsPen : PenInput {
     /** The most recent pen/touch reading from Windows, for diagnostics and tests. */
     fun lastReading(): PointerSample? = state?.let { PointerSample(it.kind, it.pressure) }
 
-    /** Hooks the window and its child windows (Compose draws into a child canvas). Call once shown. */
+    /** Window handles already hooked, so installing again only adds new windows. */
+    private val hooked = HashSet<Long>()
+
+    /**
+     * Hooks the window and its child windows (Compose draws into a child canvas). Call once the
+     * window is shown; calling again for the same or another window only hooks what's new.
+     */
+    @Synchronized
     fun install(window: java.awt.Window) {
-        if (installed || !System.getProperty("os.name").lowercase().contains("win")) return
+        if (!System.getProperty("os.name").lowercase().contains("win")) return
         try {
             val top = HWND(Native.getComponentPointer(window))
             val targets = mutableListOf(top)
             User32.INSTANCE.EnumChildWindows(top, { child, _ -> targets += child; true }, null)
-            targets.forEach(::hook)
-            installed = true
-            println("Folio: Windows pen input enabled on ${targets.size} window(s)")
+            val fresh = targets.filter { hooked.add(Pointer.nativeValue(it.pointer)) }
+            fresh.forEach(::hook)
+            installed = hooked.isNotEmpty()
+            if (fresh.isNotEmpty()) println("Folio: Windows pen input enabled on ${fresh.size} window(s)")
         } catch (t: Throwable) {
             println("Folio: Windows pen input unavailable (${t.message}); the pen will act as a mouse")
         }
